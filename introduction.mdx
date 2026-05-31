@@ -1,0 +1,90 @@
+---
+title: 'Prowl Engine: Open-Source C# 3D Game Engine'
+sidebarTitle: 'Introduction'
+description: 'Prowl is an MIT-licensed, Unity-inspired 3D game engine in C# for .NET 9 with PBR rendering, a full editor, physics, audio, and navigation.'
+---
+
+Prowl is an open-source game engine built entirely in C# on .NET 9, designed to give developers a familiar, Unity-like workflow while remaining as lean and customizable as possible. If you have shipped or prototyped with Unity, you will recognize the `GameObject`/`Component` paradigm, coroutines, `ScriptableObject`, and a near-identical scripting API — the goal is that porting existing Unity projects requires minimal friction. Prowl is currently in **early development** and is not yet stable for production use, but its core systems are functional and it welcomes contributors and enthusiasts who want to help shape its future.
+
+<Note>
+  Prowl is in early development. Expect frequent API changes, missing features, and potential bugs. It is not recommended for production game projects yet — but it is absolutely ready to explore, experiment with, and contribute to.
+</Note>
+
+## What Prowl Is
+
+Prowl is a fully self-contained, cross-platform 3D game engine. It ships with an integrated editor, a multi-backend rendering system, a physics engine, spatial audio, navmesh-based AI navigation, and a robust asset pipeline — all under the **MIT License** with no royalties or licensing fees.
+
+The engine targets **.NET 9** and runs on **Windows**, **Linux**, and **macOS** without any platform-specific forks or wrappers.
+
+## Architectural Pillars
+
+### GameObject & Component System
+
+Prowl uses a `GameObject`/`MonoBehaviour` structure that mirrors Unity's, so writing scripts in Prowl feels immediately natural. Every entity in a scene is a `GameObject` which holds one or more `Component` instances. Components implement lifecycle methods such as `Awake()`, `Start()`, `Update()`, and `OnDestroy()`. Unity-style coroutines, `ScriptableObject`, and prefabs (including nested prefabs) are all first-class citizens.
+
+### Multi-Backend Rendering via Veldrid
+
+Prowl's rendering layer is built on top of **Prowl.Veldrid** (a fork of the Veldrid graphics abstraction library). This lets the engine select the best available GPU API at runtime without changing any application code:
+
+| Platform | Preferred backend | Fallbacks |
+|----------|-------------------|-----------|
+| Windows  | OpenGL | Vulkan, DirectX 11, OpenGL ES |
+| Linux / FreeBSD | OpenGL | Vulkan, OpenGL ES |
+| macOS | Metal | OpenGL, OpenGL ES |
+
+The renderer is a **forward renderer** with HDR, **Physically Based Rendering (PBR)** (albedo, normal, roughness, metallic, ambient occlusion maps), spot/directional light shadows with a shadow atlas, motion vectors, frustum culling, batching, a procedural skybox, and post-processing (tonemapping, motion blur, Kawase bloom). Dynamic per-camera resolutions and camera-relative rendering give the engine large-world coordinate support using 64-bit doubles throughout.
+
+### Jitter2 Physics
+
+Rigid-body physics are powered by **Jitter Physics 2**. Supported collider shapes include Box, Sphere, Capsule, Cylinder, Cone, and Convex Mesh. Collision layers allow fine-grained filtering between groups of objects.
+
+### OpenAL Audio
+
+Prowl's audio system uses **OpenAL** through a modular backend design. Currently `.wav` file playback is supported, with the architecture ready for additional format support.
+
+### DotRecast Navmesh & AI Agents
+
+Navigation and AI pathfinding are handled by **Prowl.DotRecast** (a C# port of the Recast & Detour libraries). This provides runtime navmesh generation and agent steering — the same proven technology used across the games industry.
+
+### Asset Pipeline
+
+The asset pipeline tracks every asset by a stable GUID stored in a sidecar `.meta` file. Import results are cached so only changed or new files are re-processed on startup. Custom importers can be registered for proprietary file types. Sub-assets (assets stored inside other assets) and full dependency tracking are supported. The build system packs only the assets actually referenced by your scenes, producing small, self-contained standalone executables for Windows, Linux, and macOS.
+
+## Platform Support
+
+<CardGroup cols={3}>
+  <Card title="Windows" icon="windows">
+    Fully supported. Preferred backend is OpenGL with Vulkan, DirectX 11, and OpenGL ES as fallbacks.
+  </Card>
+  <Card title="Linux" icon="linux">
+    Fully supported. Preferred backend is OpenGL with Vulkan and OpenGL ES as fallbacks.
+  </Card>
+  <Card title="macOS" icon="apple">
+    Fully supported. Preferred backend is Metal with OpenGL and OpenGL ES as fallbacks.
+  </Card>
+</CardGroup>
+
+## Current Status
+
+Prowl is in **active early development**. The core feature set is in place — editor, scripting, rendering, physics, audio, navmesh, asset pipeline, and build system all function. Work in progress or planned items include cascaded shadow maps, a particle system, a terrain engine, animation tooling, a material node editor, 2D support, realtime GI, and networking. See the [GitHub project board](https://github.com/orgs/ProwlEngine/projects/1) for the full roadmap.
+
+## License
+
+Prowl is distributed under the **MIT License**. You can use it in personal, commercial, and open-source projects without restrictions or royalties.
+
+## Explore the Documentation
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/getting-started/installation">
+    Clone the repository, initialize submodules, and run the editor on your platform.
+  </Card>
+  <Card title="Editor Overview" icon="window-restore" href="/getting-started/editor-overview">
+    Learn the editor layout: scene view, hierarchy, inspector, assets browser, and more.
+  </Card>
+  <Card title="Project Setup" icon="folder-open" href="/getting-started/project-setup">
+    Create a new project, understand the folder structure, and add your first script.
+  </Card>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/ProwlEngine/Prowl">
+    Browse the source code, open issues, and contribute to the engine.
+  </Card>
+</CardGroup>

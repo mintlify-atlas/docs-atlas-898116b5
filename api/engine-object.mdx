@@ -1,0 +1,342 @@
+---
+title: 'EngineObject API — Base Class for All Engine Types'
+sidebarTitle: 'EngineObject'
+description: 'Reference for Prowl's EngineObject base class: identity (InstanceID, AssetID), lifecycle (destroy, clone), and scene search methods.'
+---
+
+`EngineObject` is the root base class for every first-class object in the Prowl runtime — `GameObject`, `MonoBehaviour`, `Scene`, assets, and more all derive from it. It establishes a globally unique runtime identity via `InstanceID`, optional persistent asset identity via `AssetID`, a human-readable `Name`, a two-phase destruction system (`DestroyLater` / `DestroyImmediate`), and a deep-clone API backed by Prowl's attribute-driven cloning infrastructure. Understanding `EngineObject` is essential before working with the scene hierarchy or writing editor tooling.
+
+<Note>
+`EngineObject` carries `[CloneBehavior(CloneBehavior.Reference)]` at the class level, which means the cloning system treats any `EngineObject` reference as shared by default. Subclasses override this by applying their own `[CloneBehavior]` attribute — for example, `MonoBehaviour` uses `CloneBehavior.ChildObject`.
+</Note>
+
+---
+
+## Identity Properties
+
+<ResponseField name="InstanceID" type="int">
+  A monotonically incrementing integer assigned at construction time. Guaranteed unique within a single process lifetime. **Never** persisted to disk — it changes every time an object is created, including after deserialization.
+
+  ```csharp
+  public int InstanceID => _instanceID;
+  ```
+
+  ```csharp
+  Debug.Log($"Object ID: {go.InstanceID}");
+  ```
+</ResponseField>
+
+<ResponseField name="AssetID" type="Guid">
+  The persistent asset GUID. `Guid.Empty` for runtime-only objects (GameObjects that were never saved as assets). Set by the asset pipeline when an object is loaded from disk.
+
+  ```csharp
+  [HideInInspector]
+  [CloneField(CloneFieldFlags.Skip)]
+  public Guid AssetID = Guid.Empty;
+  ```
+</ResponseField>
+
+<ResponseField name="FileID" type="ushort">
+  A sub-file identifier used when multiple objects are packed into a single asset file. `0` when the object is the sole resident of its file.
+
+  ```csharp
+  [HideInInspector]
+  [CloneField(CloneFieldFlags.Skip)]
+  public ushort FileID = 0;
+  ```
+</ResponseField>
+
+<ResponseField name="Name" type="string">
+  Human-readable display name. Defaults to `"New" + GetType().Name` at construction, then overridden by the caller. Persisted to disk via the serialization header.
+
+  ```csharp
+  [HideInInspector]
+  public string Name;
+  ```
+</ResponseField>
+
+<ResponseField name="IsDestroyed" type="bool">
+  Set to `true` by either destroy path. The equality operators (`==` / `!=`) treat any two destroyed `EngineObject`s as equal and treat a destroyed object as equal to `null`. Check this flag before using a cached reference.
+
+  ```csharp
+  [HideInInspector, SerializeIgnore]
+  [CloneField(CloneFieldFlags.Skip)]
+  public bool IsDestroyed = false;
+  ```
+
+  ```csharp
+  if (myObject == null || myObject.IsDestroyed)
+      return; // safe guard
+  ```
+</ResponseField>
+
+---
+
+## Lifecycle Methods
+
+### DestroyLater
+
+Marks the object as destroyed and pushes it onto the deferred destruction stack. The object is **not** disposed immediately; disposal happens the next time `EngineObject.HandleDestroyed()` is called (typically at the end of the frame by the scene manager).
+
+```csharp
+public void DestroyLater()
+```
+
+<Tip>
+Prefer `DestroyLater` during gameplay. It avoids mutating collections while iterating them and keeps destruction deterministic within a frame boundary.
+</Tip>
+
+```csharp
+// Schedule an enemy for removal at end-of-frame
+enemy.DestroyLater();
+```
+
+---
+
+### DestroyImmediate
+
+Marks the object as destroyed and calls `OnDispose()` synchronously. Use with care — calling this while the object's list is being iterated can cause collection-modification exceptions.
+
+```csharp
+public void DestroyImmediate()
+```
+
+<Warning>
+`DestroyImmediate` bypasses the deferred queue. Use it only in editor tooling, teardown sequences where no iteration is in progress, or when you explicitly need synchronous cleanup.
+</Warning>
+
+---
+
+### HandleDestroyed (static)
+
+Drains the deferred destruction stack, calling `OnDispose()` on every object that was queued by `DestroyLater()`. Called automatically by `SceneManager.Clear()` and should be called by the engine host after each frame if objects may have been deferred.
+
+```csharp
+public static void HandleDestroyed()
+```
+
+```csharp
+// Typical end-of-frame cleanup (done internally by SceneManager)
+EngineObject.HandleDestroyed();
+```
+
+---
+
+### OnDispose (virtual)
+
+Override in subclasses to release resources when the object is destroyed. The default implementation is empty. `GameObject` uses this to recursively destroy children and components; `MonoBehaviour` uses it to detach from its `GameObject`.
+
+```csharp
+public virtual void OnDispose() { }
+```
+
+---
+
+### OnValidate (virtual)
+
+Called by the editor inspector when a serialized field is modified. Override to enforce invariants (e.g. clamping a value or updating a cached computation).
+
+```csharp
+public virtual void OnValidate() { }
+```
+
+---
+
+## Clone API
+
+Prowl's cloning system is attribute-driven and supports deep copying with configurable field handling. `EngineObject` implements `ICloneExplicit` to coordinate the two-pass clone operation.
+
+### Clone
+
+Creates a deep copy of this object using the Prowl cloning infrastructure.
+
+```csharp
+public EngineObject Clone()
+```
+
+<ResponseField name="returns" type="EngineObject">
+  A newly allocated object with all fields deep-copied according to their `[CloneField]` and `[CloneBehavior]` attributes.
+</ResponseField>
+
+```csharp
+EngineObject copy = original.Clone();
+```
+
+---
+
+### CopyTo
+
+Copies data from this object into an existing target of the same type.
+
+```csharp
+public void CopyTo(EngineObject target)
+```
+
+<ParamField path="target" type="EngineObject" required>
+  The destination object. Must be the same concrete type as the source.
+</ParamField>
+
+```csharp
+sourceObject.CopyTo(targetObject);
+```
+
+---
+
+### OnSetupCloneTargets (virtual, protected)
+
+Override to customize the first pass of cloning, where the clone graph is constructed and target objects are linked. Called internally; only needed for advanced scenarios.
+
+```csharp
+protected virtual void OnSetupCloneTargets(object target, ICloneTargetSetup setup) { }
+```
+
+---
+
+### OnCopyDataTo (virtual, protected)
+
+Override to customize the second pass of cloning, where field values are actually copied. Called internally after all targets are established.
+
+```csharp
+protected virtual void OnCopyDataTo(object target, ICloneOperation operation) { }
+```
+
+---
+
+## Cloning Attributes
+
+<Accordion title="[CloneBehavior] — control how a type or field is cloned">
+
+Applied to a class to set the default clone strategy for all instances of that type.
+
+```csharp
+[CloneBehavior(CloneBehavior.Reference)]   // copy by reference (no deep copy)
+[CloneBehavior(CloneBehavior.ChildObject)] // always deep-copy
+[CloneBehavior(CloneBehavior.Default)]     // use automatic heuristics
+```
+
+| Value | Meaning |
+|-------|---------|
+| `Default` | Determined automatically from type attributes and context. |
+| `Reference` | The reference is copied as-is; the object itself is not cloned. |
+| `ChildObject` | The object is owned by its parent and deep-copied. |
+
+</Accordion>
+
+<Accordion title="[CloneField] — per-field clone flags">
+
+Applied to individual fields to refine cloning behavior regardless of the class-level setting.
+
+```csharp
+[CloneField(CloneFieldFlags.Skip)]              // never copied
+[CloneField(CloneFieldFlags.IdentityRelevant)]  // skipped when PreserveIdentity is true
+[CloneField(CloneFieldFlags.DontSkip)]          // force-copied even if other hints say skip
+```
+
+| Flag | Effect |
+|------|--------|
+| `None` | No special handling. |
+| `IdentityRelevant` | Field encodes identity (e.g. `_instanceID`); skipped in identity-preserving copies. |
+| `Skip` | Always omitted from the clone. |
+| `DontSkip` | Overrides `SerializeIgnore` and similar skip hints. |
+
+</Accordion>
+
+---
+
+## Static Search Methods
+
+### FindObjectsOfType&lt;T&gt;
+
+Searches the active scene for all `GameObject`s and `MonoBehaviour` components that are assignable to `T`.
+
+```csharp
+public static T?[] FindObjectsOfType<T>() where T : EngineObject
+```
+
+<ResponseField name="returns" type="T?[]">
+  Array of all matching objects. May contain `null` entries if a match slot could not be cast.
+</ResponseField>
+
+```csharp
+// Find all active enemy scripts
+EnemyAI[] enemies = EngineObject.FindObjectsOfType<EnemyAI>();
+```
+
+<Warning>
+`FindObjectsOfType` iterates the entire scene graph every call. Cache the result rather than calling it in `Update`.
+</Warning>
+
+---
+
+### FindObjectByID&lt;T&gt;
+
+Finds an `EngineObject` by its runtime `InstanceID`.
+
+```csharp
+public static T? FindObjectByID<T>(int id) where T : EngineObject
+```
+
+<ParamField path="id" type="int" required>
+  The `InstanceID` to search for.
+</ParamField>
+
+<ResponseField name="returns" type="T?">
+  The matching object cast to `T`, or `null` if not found or the cast fails.
+</ResponseField>
+
+```csharp
+GameObject? found = EngineObject.FindObjectByID<GameObject>(savedID);
+```
+
+---
+
+### FindObjectByIdentifier&lt;T&gt;
+
+Finds an `EngineObject` by its persistent `Guid` identifier. Useful after deserialization, where `InstanceID`s have changed but `Guid`s are stable.
+
+```csharp
+public static T? FindObjectByIdentifier<T>(Guid identifier) where T : EngineObject
+```
+
+<ParamField path="identifier" type="Guid" required>
+  The persistent GUID to search for. On `GameObject` this is `GameObject.Identifier`; on `MonoBehaviour` this is `MonoBehaviour.Identifier`.
+</ParamField>
+
+<ResponseField name="returns" type="T?">
+  The matching object cast to `T`, or `null` if not found.
+</ResponseField>
+
+```csharp
+MonoBehaviour? comp = EngineObject.FindObjectByIdentifier<MonoBehaviour>(savedGuid);
+```
+
+---
+
+## Equality and Null Safety
+
+`EngineObject` overrides `==` and `!=` to treat destroyed objects as null-equivalent:
+
+```csharp
+public static bool operator ==(EngineObject left, EngineObject right)
+public static bool operator !=(EngineObject left, EngineObject right)
+```
+
+| Comparison | Result |
+|-----------|--------|
+| `null == null` | `true` |
+| `null == destroyed` | `true` |
+| `destroyed == destroyed` | `true` |
+| `alive == alive` (same ref) | `true` |
+| `alive == alive` (different ref) | `false` |
+
+The extension method `Null()` provides a concise null-or-destroyed check:
+
+```csharp
+// Extension on EngineObject
+public static bool Null(this EngineObject obj) => obj == null || obj.IsDestroyed;
+```
+
+```csharp
+if (myObject.Null())
+    return; // object is gone
+```

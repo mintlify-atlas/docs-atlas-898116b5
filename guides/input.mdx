@@ -1,0 +1,370 @@
+---
+title: 'Handle Player Input in Prowl Engine'
+sidebarTitle: 'Input'
+description: 'Read keyboard, mouse, and cursor state in Prowl using the static Input class with key queries, mouse buttons, cursor locking, and handler stack.'
+---
+
+Prowl's `Input` class is the single, stateless gateway to every keyboard key, mouse button, and cursor property during a frame. It exposes a simple polling API — call `GetKey`, `GetMouseButton`, and their variants anywhere in a `MonoBehaviour` callback and receive an instant boolean answer. Under the hood, `Input` is backed by a stack of `IInputHandler` objects so that UI layers, cutscene managers, and menus can each push their own handler on top, suppressing game input without touching your gameplay code.
+
+## Quick Reference
+
+| Member | Type | Description |
+|---|---|---|
+| `GetKey(Key)` | `bool` | `true` while the key is held down |
+| `GetKeyDown(Key)` | `bool` | `true` only on the frame the key was pressed |
+| `GetKeyUp(Key)` | `bool` | `true` only on the frame the key was released |
+| `GetMouseButton(MouseButton)` | `bool` | `true` while the button is held |
+| `GetMouseButtonDown(MouseButton)` | `bool` | `true` on the frame the button was pressed |
+| `GetMouseButtonUp(MouseButton)` | `bool` | `true` on the frame the button was released |
+| `MousePosition` | `Vector2Int` | Current cursor pixel position |
+| `PrevMousePosition` | `Vector2Int` | Cursor position on the previous frame |
+| `MouseDelta` | `Vector2` | `MousePosition - PrevMousePosition` |
+| `MouseWheelDelta` | `float` | Scroll wheel movement this frame |
+| `CursorVisible` | `bool` | Show or hide the OS cursor |
+| `CursorLocked` | `bool` | Lock the cursor to the window center |
+| `Clipboard` | `string` | Read or write the system clipboard |
+| `InputString` | `IReadOnlyList<char>` | Text characters typed this frame |
+
+## Keyboard Input
+
+Prowl provides three distinct keyboard queries. Choose the right one to avoid repeated or missed events.
+
+```csharp
+public class PlayerController : MonoBehaviour
+{
+    public override void Update()
+    {
+        // True every frame the key is physically held — use for continuous actions
+        if (Input.GetKey(Key.LeftShift))
+            Debug.Log("Sprinting...");
+
+        // True only the ONE frame the key transitions from up to down — use for one-shot actions
+        if (Input.GetKeyDown(Key.Space))
+            Jump();
+
+        // True only the ONE frame the key transitions from down to up
+        if (Input.GetKeyUp(Key.Space))
+            EndJump();
+    }
+}
+```
+
+<Tip>
+Always use `GetKeyDown` for actions that should fire once per press (jumping, shooting, opening menus). Using `GetKey` for these causes the action to fire every frame the player holds the key.
+</Tip>
+
+### Common Key Values
+
+The `Key` enum mirrors the Veldrid physical key set. Here are the most commonly used values:
+
+<Accordion title="Keyboard keys quick-reference">
+
+**Letters** — `Key.A` through `Key.Z`
+
+**Top-row numbers** — `Key.Num0` through `Key.Num9`
+
+**Modifier keys** — `Key.LeftShift`, `Key.RightShift`, `Key.LeftControl`, `Key.RightControl`, `Key.LeftAlt`, `Key.RightAlt`
+
+**Navigation** — `Key.Up`, `Key.Down`, `Key.Left`, `Key.Right`, `Key.Home`, `Key.End`, `Key.PageUp`, `Key.PageDown`
+
+**Action keys** — `Key.Return`, `Key.Escape`, `Key.Space`, `Key.Backspace`, `Key.Tab`, `Key.Delete`, `Key.Insert`
+
+**Function keys** — `Key.F1` through `Key.F24`
+
+**Numpad** — `Key.Keypad0` through `Key.Keypad9`, `Key.KeypadPlus`, `Key.KeypadMinus`, `Key.KeypadMultiply`, `Key.KeypadDivide`, `Key.KeypadEnter`
+
+</Accordion>
+
+## Mouse Input
+
+### Buttons
+
+```csharp
+public class Weapon : MonoBehaviour
+{
+    public override void Update()
+    {
+        // Primary fire — held
+        if (Input.GetMouseButton(MouseButton.Left))
+            FireContinuous();
+
+        // Secondary fire — single press
+        if (Input.GetMouseButtonDown(MouseButton.Right))
+            AimDownSights();
+
+        // Released ADS
+        if (Input.GetMouseButtonUp(MouseButton.Right))
+            HipFire();
+    }
+}
+```
+
+### MouseButton Enum
+
+| Value | Meaning |
+|---|---|
+| `MouseButton.Left` | Primary button |
+| `MouseButton.Right` | Secondary button |
+| `MouseButton.Middle` | Scroll-wheel click |
+| `MouseButton.Button1` – `MouseButton.Button9` | Extra side buttons |
+
+### Position and Delta
+
+`MousePosition` returns the current cursor position in screen pixels, with `(0, 0)` at the top-left. `MouseDelta` is the per-frame movement vector and is the foundation of mouse-look.
+
+```csharp
+public class MouseLook : MonoBehaviour
+{
+    public float sensitivity = 0.15f;
+    private float _pitchAccum;
+
+    public override void Awake()
+    {
+        Input.CursorLocked  = true;
+        Input.CursorVisible = false;
+    }
+
+    public override void Update()
+    {
+        Vector2 delta = Input.MouseDelta * sensitivity;
+
+        // Horizontal look — rotate the whole character on Y
+        Transform.Rotate(Vector3.Up, delta.x);
+
+        // Vertical look — pitch the camera, clamped
+        _pitchAccum = Math.Clamp(_pitchAccum - delta.y, -80f, 80f);
+        GetComponent<Camera>().Transform.localEulerAngles =
+            new Vector3(_pitchAccum, 0, 0);
+    }
+}
+```
+
+### Scroll Wheel
+
+```csharp
+public class WeaponSlot : MonoBehaviour
+{
+    private int _selectedSlot = 0;
+    private const int SlotCount = 5;
+
+    public override void Update()
+    {
+        float scroll = Input.MouseWheelDelta;
+        if (scroll != 0f)
+        {
+            _selectedSlot = (_selectedSlot - Math.Sign((int)scroll) + SlotCount) % SlotCount;
+            EquipSlot(_selectedSlot);
+        }
+    }
+}
+```
+
+## Cursor Control
+
+Locking and hiding the cursor is essential for any first-person or twin-stick experience. Set `Input.CursorLocked = true` to pin the cursor to the window centre and get unbounded `MouseDelta` movement. Set `Input.CursorVisible = false` to hide the OS cursor graphic.
+
+```csharp
+public class GameManager : MonoBehaviour
+{
+    public override void Start()
+    {
+        EnterGameplay();
+    }
+
+    public void EnterGameplay()
+    {
+        Input.CursorLocked  = true;
+        Input.CursorVisible = false;
+    }
+
+    public void EnterMenu()
+    {
+        Input.CursorLocked  = false;
+        Input.CursorVisible = true;
+    }
+
+    public override void Update()
+    {
+        if (Input.GetKeyDown(Key.Escape))
+            EnterMenu();
+    }
+}
+```
+
+<Note>
+The `DefaultInputHandler` automatically releases the cursor lock whenever the user presses `Escape` or the window loses focus, so players can always regain control of their cursor.
+</Note>
+
+## Text Input
+
+`Input.InputString` contains every printable character typed during the current frame. Use it for in-game chat boxes or custom text fields.
+
+```csharp
+public class ChatBox : MonoBehaviour
+{
+    private System.Text.StringBuilder _buffer = new();
+
+    public override void Update()
+    {
+        foreach (char c in Input.InputString)
+        {
+            if (c == '\b') // backspace
+            {
+                if (_buffer.Length > 0)
+                    _buffer.Remove(_buffer.Length - 1, 1);
+            }
+            else
+            {
+                _buffer.Append(c);
+            }
+        }
+
+        if (Input.GetKeyDown(Key.Return))
+            Send(_buffer.ToString());
+    }
+}
+```
+
+## Clipboard Access
+
+```csharp
+// Write to clipboard
+Input.Clipboard = "https://prowlengine.com";
+
+// Read from clipboard
+string pasted = Input.Clipboard;
+```
+
+## The Handler Stack
+
+`Input` is not a static singleton with fixed behaviour — it delegates every call to the top-most `IInputHandler` on `Input.Handlers`. This makes it trivially easy to layer input contexts:
+
+```
+[ UIInputHandler   ]  ← current (UI modal open)
+[ GameInputHandler ]  ← game layer underneath
+```
+
+```csharp
+public class ModalDialog : MonoBehaviour
+{
+    private UIInputHandler _handler;
+
+    public override void OnEnable()
+    {
+        // Push a handler that absorbs all input while the dialog is open
+        _handler = new UIInputHandler();
+        Input.PushHandler(_handler);
+    }
+
+    public override void OnDisable()
+    {
+        // Restore the previous handler when the dialog closes
+        Input.PopHandler();
+    }
+}
+```
+
+### Implementing IInputHandler
+
+`IInputHandler` is the contract every handler must fulfill. You can extend `DefaultInputHandler` for most use cases, or implement the interface from scratch for full control.
+
+```csharp
+public class UIInputHandler : DefaultInputHandler
+{
+    // Block all game keys while UI is active
+    public override bool GetKey(Key key)     => false;
+    public override bool GetKeyDown(Key key) => false;
+    public override bool GetKeyUp(Key key)   => false;
+
+    // Allow mouse so the user can click UI elements
+    public override bool GetMouseButton(MouseButton b)     => base.GetMouseButton(b);
+    public override bool GetMouseButtonDown(MouseButton b) => base.GetMouseButtonDown(b);
+    public override bool GetMouseButtonUp(MouseButton b)   => base.GetMouseButtonUp(b);
+}
+```
+
+### IInputHandler Interface
+
+```csharp
+public interface IInputHandler
+{
+    string Clipboard { get; set; }
+    bool IsAnyKeyDown { get; }
+    IReadOnlyList<char> InputString { get; set; }
+
+    Vector2 MouseDelta { get; }
+    Vector2Int MousePosition { get; set; }
+    float MouseWheelDelta { get; }
+    Vector2Int PrevMousePosition { get; }
+
+    bool CursorVisible { get; set; }
+    bool CursorLocked { get; set; }
+
+    event Action<Key, bool> OnKeyEvent;
+    event Action<MouseButton, double, double, bool, bool> OnMouseEvent;
+
+    bool GetKey(Key key);
+    bool GetKeyDown(Key key);
+    bool GetKeyUp(Key key);
+
+    bool GetMouseButton(MouseButton button);
+    bool GetMouseButtonDown(MouseButton button);
+    bool GetMouseButtonUp(MouseButton button);
+}
+```
+
+## Complete Example: First-Person Character
+
+```csharp
+[ExecutionOrder(-10)]
+public class FPSController : MonoBehaviour
+{
+    public float moveSpeed   = 5f;
+    public float sprintMult  = 2f;
+    public float lookSensitivity = 0.15f;
+    public float jumpForce   = 6f;
+
+    private Rigidbody _rb;
+    private float _pitch;
+
+    public override void Awake()
+    {
+        _rb = GetComponent<Rigidbody>();
+        Input.CursorLocked  = true;
+        Input.CursorVisible = false;
+    }
+
+    public override void Update()
+    {
+        // --- Mouse look ---
+        Vector2 look = Input.MouseDelta * lookSensitivity;
+        Transform.Rotate(Vector3.Up, look.x);
+        _pitch = Math.Clamp(_pitch - look.y, -80f, 80f);
+        GetComponentInChildren<Camera>().Transform.localEulerAngles =
+            new Vector3(_pitch, 0, 0);
+
+        // --- Jump ---
+        if (Input.GetKeyDown(Key.Space))
+            _rb.AddForce(Vector3.Up * jumpForce, ForceMode.Impulse);
+
+        // --- Cursor release ---
+        if (Input.GetKeyDown(Key.Escape))
+        {
+            Input.CursorLocked  = false;
+            Input.CursorVisible = true;
+        }
+    }
+
+    public override void FixedUpdate()
+    {
+        // --- Movement (in FixedUpdate for physics consistency) ---
+        float x = (Input.GetKey(Key.D) ? 1f : 0f) - (Input.GetKey(Key.A) ? 1f : 0f);
+        float z = (Input.GetKey(Key.W) ? 1f : 0f) - (Input.GetKey(Key.S) ? 1f : 0f);
+
+        float speed = moveSpeed * (Input.GetKey(Key.LeftShift) ? sprintMult : 1f);
+        Vector3 move = (Transform.Right * x + Transform.Forward * z).Normalized * speed;
+
+        _rb.velocity = new Vector3(move.x, _rb.velocity.y, move.z);
+    }
+}
+```

@@ -1,0 +1,171 @@
+---
+title: 'Build and Package Your Prowl Game for Desktop'
+sidebarTitle: 'Building'
+description: 'Compile and package a Prowl game for Windows, Linux, or macOS using the editor Build Window, DesktopPlayerBuilder, and the standalone player.'
+---
+
+When your game is ready to ship, Prowl's build pipeline compiles your C# scripts, bundles all referenced assets, and outputs a self-contained executable alongside a `GameData/` directory. The whole process is orchestrated through the **Build Window** in the editor, which drives the `Desktop_Player` builder — a concrete implementation of the abstract `ProjectBuilder` class. The result is a standalone `.exe` (or platform-native binary) that depends only on the .NET 9 runtime and your bundled assets, with no editor code included.
+
+## Opening the Build Window
+
+In the Prowl editor, open **File → Build Settings** (or the equivalent Build Window panel). Here you:
+
+1. Add the scenes you want included in the build (at least one is required).
+2. Choose the target **Platform** (Windows, Linux, macOS) and **Architecture** (x64, Arm64, …).
+3. Select **Debug** or **Release** configuration.
+4. Choose **Asset Packing** mode: *All Assets* or *Used Assets* (dependency-traced from the scene list).
+5. Optionally enable **AOT Compilation** (`BuildProjectSettings.EnableAOTCompilation`) for ahead-of-time native compilation.
+6. Set the output directory and click **Build**.
+
+## Build Steps
+
+<Steps>
+  <Step title="Validate the project and scenes">
+    `ProjectBuilder.StartBuild` checks that a project is loaded and that every scene `AssetRef` in the list is available. If validation fails, the build aborts with a descriptive error in the console.
+  </Step>
+
+  <Step title="Compile user scripts">
+    `Desktop_Player` calls `CompileProject`, which regenerates the `.csproj` for your game code and compiles it with `dotnet` into a `GameName.dll`. The output lands in `Temp/bin/GameName/Build/`.
+
+    ```csharp
+    // Inside Desktop_Player.CompileProject (simplified)
+    active.GenerateGameProject();
+    active.CompileGameAssembly(new DotnetCompileOptions
+    {
+        isRelease = configuration == Configuration.Release,
+        isSelfContained = false,
+        platform = platform,
+        architecture = architecture,
+        outputPath = project,
+    });
+    ```
+  </Step>
+
+  <Step title="Compile the Desktop Player shell">
+    The thin `DesktopPlayer` executable (found under `Players/Desktop/` next to the editor binary) is copied to a temp directory, given a generated `.csproj` that references `Prowl.Runtime` and your game DLL, then compiled into the output folder as a self-contained native binary.
+
+    ```csharp
+    // Key options used when compiling the player
+    CSProjectOptions options = new()
+    {
+        OutputName            = "DesktopPlayer",
+        OutputExecutable      = true,
+        AllowUnsafeCode       = true,
+        EnableAOTCompatibility = true,
+        PublishAOT            = BuildProjectSettings.Instance.EnableAOTCompilation,
+    };
+    options.AddReference(runtimeAssembly, copyLocal: true);
+    options.AddReference(gameLibrary);
+    ```
+  </Step>
+
+  <Step title="Pack assets">
+    Assets are exported into `<OutputDir>/GameData/` as Prowl build packages.
+
+    - **Used Assets** (default): `AssetDatabase.GetDependenciesDeep` traces all assets referenced from your scenes. All `Shader` assets are always included regardless.
+    - **All Assets**: `AssetDatabase.ExportAllBuildPackages` exports every asset in the project.
+
+    ```csharp
+    // Used Assets mode
+    HashSet<Guid> assets = [];
+    foreach (AssetRef<Scene> scene in scenes)
+        AssetDatabase.GetDependenciesDeep(scene.AssetID, ref assets);
+
+    // Always include shaders
+    foreach (var shader in AssetDatabase.GetAllAssetsOfType<Shader>())
+        assets.Add(shader.Item2);
+
+    AssetDatabase.ExportBuildPackages(assets.ToArray(), new DirectoryInfo(dataPath));
+    ```
+  </Step>
+
+  <Step title="Pack scenes">
+    Each scene is serialized to binary using `Prowl.Echo` and written to `GameData/scene_0.prowl`, `scene_1.prowl`, etc. Scene order in the Build Window determines load order at runtime.
+
+    ```csharp
+    EchoObject tag = Serializer.Serialize(scene.Res!);
+    tag.WriteToBinary(new FileInfo(Path.Combine(dataPath, $"scene_{i}.prowl")));
+    ```
+  </Step>
+
+  <Step title="Pack project settings">
+    Any `ScriptableSingleton` that has a `[FilePath(Location.Setting)]` attribute is copied to `GameData/` via its `CopyTo(string path)` static method, so runtime settings (input maps, quality levels, etc.) are available to the standalone player.
+  </Step>
+</Steps>
+
+## Build Output Structure
+
+```
+OutputDir/
+├── DesktopPlayer.exe        ← standalone entry point (platform executable)
+├── GameData/
+│   ├── scene_0.prowl        ← serialized scenes
+│   ├── scene_1.prowl
+│   ├── *.prowlpackage       ← bundled asset packages
+│   └── *.prowlsetting       ← project settings
+└── (runtime .dlls if not AOT)
+```
+
+<Note>
+The `GameData/` directory must always be co-located with the executable. Do not move or rename it.
+</Note>
+
+## Debug vs Release
+
+| Setting | Debug | Release |
+|---|---|---|
+| Optimization | None | Full (`dotnet publish -c Release`) |
+| Symbols | Included | Stripped |
+| `DEBUG` define | Active | Inactive |
+| `Debug.Log` calls | Active | Active (use log levels to filter) |
+
+Use **Debug** builds while iterating so you get stack traces on crashes. Switch to **Release** for distribution.
+
+## AOT Compilation
+
+When `BuildProjectSettings.EnableAOTCompilation` is `true`, the player is published with `PublishAOT = true`. This produces a single native binary with no JIT dependency, which reduces startup time and memory usage at the cost of longer build times. AOT requires all generic instantiations to be statically resolvable — if you use heavy runtime reflection, test your build in AOT mode early.
+
+```csharp
+// BuildProjectSettings (editor-side) — toggle in the Build Window UI
+public bool EnableAOTCompilation = false;
+```
+
+<Warning>
+AOT compilation is experimental. Dynamic code generation (`Reflection.Emit`, source generators that run at runtime, etc.) will fail at publish time. Prowl's own serialization layer is designed to be AOT-compatible.
+</Warning>
+
+## Platform Targets
+
+<CardGroup cols={3}>
+  <Card title="Windows" icon="windows">
+    Set `platform = Platform.Windows`. Outputs `DesktopPlayer.exe`. Tested on x64 and Arm64.
+  </Card>
+  <Card title="Linux" icon="linux">
+    Set `platform = Platform.Linux`. Outputs a native ELF binary. Requires the .NET 9 runtime or AOT mode.
+  </Card>
+  <Card title="macOS" icon="apple">
+    Set `platform = Platform.OSX`. Outputs a native Mach-O binary. Universal (x64 + Arm64) requires two separate builds for now.
+  </Card>
+</CardGroup>
+
+<Note>
+Android, iOS, and WebAssembly (browser) targets are **not yet supported**. Contributions are welcome — see the `ProjectBuilder` abstract class for the extension point.
+</Note>
+
+## What's Included in the Build
+
+| Component | Source |
+|---|---|
+| `DesktopPlayer` host | `Players/Desktop/` template in the editor install |
+| `Prowl.Runtime.dll` | Copied as a reference from the editor install |
+| `GameName.dll` | Your compiled game scripts |
+| Veldrid + backends | Transitive reference from `Prowl.Runtime` |
+| Asset packages | Exported from `AssetDatabase` |
+| Scenes | Serialized via `Prowl.Echo` |
+| Project settings | Copied from editor settings folder |
+
+The editor assemblies (`Prowl.Editor`, `Prowl.Editor.Build`, etc.) are **never** included in the build output.
+
+## Iterating Quickly
+
+For fast iteration during development, use **Play Mode** in the editor rather than a full build. A full build is only required when testing asset streaming, platform-specific rendering paths, or AOT behavior. The **Used Assets** packing mode dramatically reduces build times for large projects by skipping assets not reachable from the included scenes.

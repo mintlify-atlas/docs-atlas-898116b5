@@ -1,0 +1,267 @@
+---
+title: 'Debug API — Logging and Diagnostics in Prowl'
+sidebarTitle: 'Debug'
+description: 'Reference for Prowl's Debug class: log messages, warnings, errors, and exceptions to the editor console with filtering and severity levels.'
+---
+
+The `Debug` class is Prowl's unified diagnostics hub. It routes structured log messages to the editor Console Window, captures C# stack traces for every log entry, fires an `OnLog` event so any subsystem can subscribe to log output, and provides assert and guard helpers for defensive programming. Beyond logging, `Debug` is also the entry point for the engine's gizmo drawing system — the visual overlays used in the Scene View to visualise colliders, paths, and other editor-only geometry. Every log call captures a `DebugStackTrace` at a cost of roughly 15 µs on modern hardware, which is acceptable for debugging but should be avoided in tight inner loops in shipping builds.
+
+## Log Severity Levels
+
+```csharp
+public enum LogSeverity
+{
+    Success   = 1 << 0,   // Green
+    Normal    = 1 << 1,   // White
+    Warning   = 1 << 2,   // Yellow
+    Error     = 1 << 3,   // Red
+    Exception = 1 << 4,   // Dark Red
+}
+```
+
+Each severity maps to a distinct console colour and a distinct filter in the editor Console Window, so you can show or hide categories independently.
+
+---
+
+## Logging Methods
+
+### Log
+
+```csharp
+public static void Log(string message)
+public static void Log(object message)
+```
+
+Logs a message at `LogSeverity.Normal`. The `object` overload calls `.ToString()` on the argument.
+
+### LogWarning
+
+```csharp
+public static void LogWarning(string message)
+public static void LogWarning(object message)
+```
+
+Logs at `LogSeverity.Warning`. Use for non-fatal conditions that should be investigated.
+
+### LogError
+
+```csharp
+public static void LogError(string message)
+public static void LogError(object message)
+```
+
+Logs at `LogSeverity.Error`. Use for recoverable failures, missing assets, or violated contracts.
+
+### LogSuccess
+
+```csharp
+public static void LogSuccess(string message)
+public static void LogSuccess(object message)
+```
+
+Logs at `LogSeverity.Success` (green). Useful for confirming successful operations such as asset loads or network connections.
+
+### LogException
+
+```csharp
+public static void LogException(Exception exception)
+```
+
+Logs at `LogSeverity.Exception`. Prints `exception.Message`, the inner exception message (if present), and the full stack trace of the exception. Also fires `OnLog` with the combined message.
+
+<ParamField path="exception" type="Exception">
+  The exception to log. Its `InnerException` is also included if non-null.
+</ParamField>
+
+### Log (full overload)
+
+```csharp
+public static void Log(string message, LogSeverity logSeverity, DebugStackTrace? customTrace = null)
+```
+
+The primary implementation all other log methods delegate to. Allows specifying an explicit severity and optionally providing a pre-built `DebugStackTrace` instead of capturing one automatically.
+
+<ParamField path="message" type="string">Log message text.</ParamField>
+<ParamField path="logSeverity" type="LogSeverity">Severity level.</ParamField>
+<ParamField path="customTrace" type="DebugStackTrace?" default="null">
+  When provided, this trace is used instead of capturing a new one from the call site. Useful when logging errors forwarded from another context.
+</ParamField>
+
+---
+
+## OnLog Event
+
+```csharp
+public static event OnLog? OnLog;
+```
+
+Where `OnLog` is:
+
+```csharp
+public delegate void OnLog(string message, DebugStackTrace? stackTrace, LogSeverity logSeverity);
+```
+
+Subscribe to receive all log output — useful for in-game consoles, test frameworks, or remote logging.
+
+```csharp
+Debug.OnLog += (msg, trace, severity) =>
+{
+    if (severity >= LogSeverity.Warning)
+        inGameConsole.Append($"[{severity}] {msg}");
+};
+```
+
+---
+
+## Stack Trace Types
+
+### DebugStackFrame
+
+```csharp
+public record DebugStackFrame(
+    string fileName,
+    int? line = null,
+    int? column = null,
+    MethodBase? methodBase = null)
+```
+
+Represents a single frame in a captured stack trace. `ToString()` formats it as:
+
+- `"In TypeName.MethodName at file.cs(line,col)"` when a method is known.
+- `"At file.cs(line)"` otherwise.
+
+### DebugStackTrace
+
+```csharp
+public record DebugStackTrace(params DebugStackFrame[] stackFrames)
+```
+
+An array of `DebugStackFrame` entries. Can be explicitly cast from a `System.Diagnostics.StackTrace`:
+
+```csharp
+DebugStackTrace trace = (DebugStackTrace)new StackTrace(exception, fNeedFileInfo: true);
+```
+
+---
+
+## Assert and Guard Helpers
+
+### Assert
+
+```csharp
+public static void Assert(bool condition)
+public static void Assert(bool condition, string? message)
+```
+
+Delegates to `System.Diagnostics.Debug.Assert`. Throws in debug builds when `condition` is `false`.
+
+### If (conditional throw)
+
+```csharp
+public static void If(bool condition, string message = "")
+```
+
+Throws `Exception(message)` when `condition` is `true`. Use to guard invalid states:
+
+```csharp
+Debug.If(index < 0, "Index must be non-negative");
+```
+
+### IfNull
+
+```csharp
+public static void IfNull(object value, string message = "")
+```
+
+Throws `Exception(message)` when `value` is `null`.
+
+### IfNullOrEmpty
+
+```csharp
+public static void IfNullOrEmpty(string value, string message = "")
+```
+
+Throws when `string.IsNullOrEmpty(value)`.
+
+---
+
+## Gizmo Drawing
+
+`Debug` also hosts the engine's gizmo system. Gizmo calls are collected each frame and rendered as wire or solid overlays in the Scene View only (they do not appear in the game view).
+
+<Note>
+All gizmo draw calls are batched. Call them from `OnDrawGizmos` or equivalent per-frame callbacks; they are cleared each frame by `Debug.ClearGizmos()`.
+</Note>
+
+### Matrix Stack
+
+```csharp
+public static void PushMatrix(Matrix4x4 matrix)
+public static void PopMatrix()
+```
+
+Transforms subsequent gizmo geometry into the given local space.
+
+### Primitives
+
+```csharp
+public static void DrawLine(Vector3 start, Vector3 end, Color color)
+public static void DrawTriangle(Vector3 a, Vector3 b, Vector3 c, Color color)
+public static void DrawWireCube(Vector3 center, Vector3 halfExtents, Color color)
+public static void DrawCube(Vector3 center, Vector3 halfExtents, Color color)
+public static void DrawWireCircle(Vector3 center, Vector3 normal, double radius, Color color, int segments = 16)
+public static void DrawWireSphere(Vector3 center, double radius, Color color, int segments = 16)
+public static void DrawSphere(Vector3 center, double radius, Color color, int segments = 16)
+public static void DrawWireCone(Vector3 start, Vector3 direction, double radius, Color color, int segments = 16)
+public static void DrawArrow(Vector3 start, Vector3 direction, Color color)
+public static void DrawIcon(Texture2D icon, Vector3 center, double scale, Color color)
+```
+
+---
+
+## Usage Examples
+
+<CodeGroup>
+```csharp Basic Logging
+Debug.Log("Player spawned at " + transform.position);
+Debug.LogWarning("Asset not found, using default");
+Debug.LogError("Failed to connect to server");
+Debug.LogSuccess("Scene loaded successfully");
+```
+
+```csharp Exception Handling
+try
+{
+    LoadLevel("Level_99");
+}
+catch (Exception e)
+{
+    Debug.LogException(e);
+}
+```
+
+```csharp Custom Severity
+Debug.Log($"Shader compiled in {ms} ms", LogSeverity.Success);
+```
+
+```csharp Assertions
+Debug.IfNull(myComponent, "Required component is missing");
+Debug.Assert(health >= 0, "Health should never be negative");
+```
+
+```csharp Gizmos (in OnDrawGizmos)
+Debug.DrawWireSphere(transform.position, detectionRadius, Color.yellow);
+Debug.DrawArrow(transform.position, transform.forward * 2, Color.blue);
+```
+</CodeGroup>
+
+## Editor Console Window
+
+The Console Window in the Prowl Editor displays each logged entry with:
+
+- A **severity icon** and **colour** corresponding to its `LogSeverity`.
+- The **message text**.
+- A **collapsible stack trace** showing the file, line, and method name at each frame.
+- **Filter toggles** per severity level so you can hide `Normal` noise and focus on `Warning`/`Error` entries.
+
+Double-clicking an entry navigates the editor to the source file and line number where the log was emitted.

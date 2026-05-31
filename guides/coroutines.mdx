@@ -1,0 +1,325 @@
+---
+title: 'Coroutines and Async Patterns in Prowl'
+sidebarTitle: 'Coroutines'
+description: 'Use Prowl coroutines to run multi-frame async logic: start, stop, and yield with WaitForSeconds, WaitForEndOfFrame, and WaitForFixedUpdate.'
+---
+
+Coroutines let you write logic that spans multiple frames in a straight-line style, without callbacks or state machines. You write a normal C# method that returns `IEnumerator`, then yield control back to the engine at any point — for a set duration, until the end of the current frame, or until the next physics step. The engine resumes your method exactly where it left off on the next eligible frame. This makes coroutines ideal for timed sequences, loading stages, animation orchestration, and any behavior that "happens over time" but is too simple to warrant a full state machine.
+
+## How Coroutines Work
+
+A coroutine is started with `StartCoroutine(string methodName)` — passing the name of a method on the same `MonoBehaviour` that returns `IEnumerator`. The engine creates a `Coroutine` object that wraps an `IEnumerator` state machine and advances it each frame (or each fixed step, depending on the yield instruction in use).
+
+Coroutines are tracked by method name inside three separate internal dictionaries:
+
+- **Default** — advances once per `Update()` frame.
+- **End-of-frame** — advances after all cameras and GUI have rendered (`WaitForEndOfFrame`).
+- **Fixed-update** — advances on physics ticks (`WaitForFixedUpdate`).
+
+When a coroutine finishes (its `IEnumerator` is exhausted), it is automatically removed. You can also stop one explicitly by name.
+
+## Starting Coroutines
+
+```csharp
+public class Intro : MonoBehaviour
+{
+    public override void Start()
+    {
+        // Start by method name — simplest form
+        StartCoroutine("PlayIntroSequence");
+    }
+
+    IEnumerator PlayIntroSequence()
+    {
+        Debug.Log("Fade in...");
+        yield return new WaitForSeconds(2f);
+
+        Debug.Log("Title card...");
+        yield return new WaitForSeconds(3f);
+
+        Debug.Log("Begin gameplay!");
+    }
+}
+```
+
+<Note>
+The method name passed to `StartCoroutine(string)` must exactly match the name of a method on the **same** MonoBehaviour instance (public or private). The engine uses reflection to locate it; a typo produces a runtime error message and returns `null`.
+</Note>
+
+## Stopping Coroutines
+
+```csharp
+public class PulseLight : MonoBehaviour
+{
+    public override void OnEnable()  => StartCoroutine("Pulse");
+    public override void OnDisable() => StopCoroutine("Pulse");
+
+    // Stop every coroutine on this component at once
+    public void Panic() => StopAllCoroutines();
+
+    IEnumerator Pulse()
+    {
+        while (true)
+        {
+            // ... brighten light ...
+            yield return new WaitForSeconds(0.5f);
+            // ... dim light ...
+            yield return new WaitForSeconds(0.5f);
+        }
+    }
+}
+```
+
+`StopCoroutine(string methodName)` removes the coroutine from all three internal queues (default, end-of-frame, and fixed-update). `StopAllCoroutines()` clears every queue at once.
+
+## Yield Instructions
+
+Prowl provides three built-in yield instructions, all inheriting from `MonoBehaviour.YieldInstruction`.
+
+<CardGroup cols={3}>
+  <Card title="WaitForSeconds" icon="clock">
+    Suspends the coroutine until `seconds` of **scaled** game time have elapsed. Uses `Time.time` internally.
+  </Card>
+  <Card title="WaitForEndOfFrame" icon="display">
+    Suspends until after all cameras and GUI have rendered for the current frame, just before the frame is displayed.
+  </Card>
+  <Card title="WaitForFixedUpdate" icon="gears">
+    Suspends until the next physics fixed-update tick. Useful for physics queries that must run in-step.
+  </Card>
+</CardGroup>
+
+### WaitForSeconds
+
+```csharp
+IEnumerator CountDown()
+{
+    for (int i = 5; i > 0; i--)
+    {
+        Debug.Log($"T-minus {i}...");
+        yield return new WaitForSeconds(1f);
+    }
+    Debug.Log("Launch!");
+}
+```
+
+`WaitForSeconds` captures `Time.time + seconds` at construction. Because it uses scaled time, pausing the game (`Time.timeScale = 0`) will also pause any pending `WaitForSeconds` yields.
+
+### WaitForEndOfFrame
+
+```csharp
+IEnumerator CaptureScreenshot()
+{
+    // Wait until rendering is fully complete before reading pixels
+    yield return new WaitForEndOfFrame();
+    Texture2D shot = ScreenCapture.CaptureScreenshotAsTexture();
+    File.WriteAllBytes("screenshot.png", shot.EncodeToPNG());
+}
+```
+
+### WaitForFixedUpdate
+
+```csharp
+IEnumerator ApplyBlast(Vector3 center, float radius, float force)
+{
+    // Ensure we apply the force in the same physics step we detect the explosion
+    yield return new WaitForFixedUpdate();
+    foreach (var rb in Physics.OverlapSphere(center, radius))
+        rb.AddExplosionForce(force, center, radius);
+}
+```
+
+## Chaining Coroutines
+
+You can yield on another `Coroutine` object to wait for it to finish before continuing:
+
+```csharp
+public override void Start()
+{
+    StartCoroutine("MasterSequence");
+}
+
+IEnumerator MasterSequence()
+{
+    // Run the intro, then the cutscene, then hand off to gameplay
+    Coroutine intro    = StartCoroutine("RunIntro");
+    yield return intro; // waits until RunIntro finishes
+
+    Coroutine cutscene = StartCoroutine("RunCutscene");
+    yield return cutscene;
+
+    EnablePlayerInput();
+}
+
+IEnumerator RunIntro()
+{
+    yield return new WaitForSeconds(3f);
+    Debug.Log("Intro done.");
+}
+
+IEnumerator RunCutscene()
+{
+    yield return new WaitForSeconds(5f);
+    Debug.Log("Cutscene done.");
+}
+```
+
+## Practical Examples
+
+<Tabs>
+  <Tab title="Delayed Action">
+    ```csharp
+    public class Bomb : MonoBehaviour
+    {
+        public float fuseTime = 3f;
+
+        public override void Start() => StartCoroutine("Detonate");
+
+        IEnumerator Detonate()
+        {
+            yield return new WaitForSeconds(fuseTime);
+            // Spawn explosion effect, then destroy self
+            GameObject.Instantiate(explosionPrefab, Transform.position);
+            GameObject.DestroyImmediate();
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="Animation Sequence">
+    ```csharp
+    public class DoorController : MonoBehaviour
+    {
+        public float openAngle  = 90f;
+        public float closeDelay = 5f;
+        public float speed      = 120f; // degrees per second
+
+        public void Open() => StartCoroutine("OpenThenClose");
+
+        IEnumerator OpenThenClose()
+        {
+            // Rotate open
+            float rotated = 0f;
+            while (rotated < openAngle)
+            {
+                float step = speed * Time.deltaTimeF;
+                Transform.Rotate(Vector3.Up, step);
+                rotated += step;
+                yield return null; // wait one frame
+            }
+
+            yield return new WaitForSeconds(closeDelay);
+
+            // Rotate closed
+            float closed = 0f;
+            while (closed < openAngle)
+            {
+                float step = speed * Time.deltaTimeF;
+                Transform.Rotate(Vector3.Up, -step);
+                closed += step;
+                yield return null;
+            }
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="Loading Sequence">
+    ```csharp
+    public class LoadingScreen : MonoBehaviour
+    {
+        public override void Start() => StartCoroutine("Load");
+
+        IEnumerator Load()
+        {
+            ShowProgress(0f, "Loading assets...");
+            yield return new WaitForEndOfFrame(); // let UI render
+
+            AssetDatabase.LoadAll();
+
+            ShowProgress(0.5f, "Initialising world...");
+            yield return new WaitForEndOfFrame();
+
+            WorldGenerator.Build();
+
+            ShowProgress(1f, "Ready!");
+            yield return new WaitForSeconds(1f);
+
+            SceneManager.LoadScene("Main");
+        }
+
+        private void ShowProgress(float t, string msg) { /* update UI */ }
+    }
+    ```
+  </Tab>
+  <Tab title="Repeating Timer">
+    ```csharp
+    public class EnemyWaveSpawner : MonoBehaviour
+    {
+        public float waveCooldown = 30f;
+
+        public override void OnEnable()  => StartCoroutine("SpawnWaves");
+        public override void OnDisable() => StopCoroutine("SpawnWaves");
+
+        IEnumerator SpawnWaves()
+        {
+            while (true)
+            {
+                SpawnNextWave();
+                yield return new WaitForSeconds(waveCooldown);
+            }
+        }
+
+        private void SpawnNextWave() { /* ... */ }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Important Gotchas
+
+<CardGroup cols={2}>
+  <Card title="Coroutines stop when disabled" icon="circle-pause">
+    If the GameObject or MonoBehaviour is disabled or destroyed mid-coroutine, the coroutine is silently abandoned. Always restart them in `OnEnable` if the behavior should resume.
+  </Card>
+  <Card title="Scaled time pauses WaitForSeconds" icon="hourglass-half">
+    `WaitForSeconds` uses `Time.time`, which is affected by `Time.timeScale`. Setting `timeScale = 0` to pause the game will also freeze all pending `WaitForSeconds` yields.
+  </Card>
+  <Card title="Unique names per component" icon="tag">
+    Coroutine names must be unique per `MonoBehaviour` instance. Starting a coroutine with the same method name as one already running adds a second entry alongside the first — they do not cancel each other.
+  </Card>
+  <Card title="Coroutines are not threads" icon="microchip">
+    Coroutines run on the main thread between frames. They cannot do parallel work. For CPU-heavy tasks that must not block rendering, use `System.Threading.Tasks.Task` or `async/await` instead.
+  </Card>
+</CardGroup>
+
+## Coroutines vs Task / async-await
+
+| Concern | Coroutine | Task / async-await |
+|---|---|---|
+| Multi-frame game logic | ✅ Natural fit — yields integrate with frame loop | ❌ Requires marshalling back to main thread |
+| Time paused by `timeScale` | ✅ `WaitForSeconds` respects scale | ❌ `Task.Delay` uses wall-clock time |
+| CPU-heavy background work | ❌ Blocks the main thread | ✅ Runs on thread pool |
+| I/O (file, network) | ❌ Awkward — must await from Update | ✅ First-class support |
+| Exception propagation | ❌ Swallowed silently | ✅ Full stack trace via `await` |
+
+Use coroutines for anything that is naturally expressed as "do A, wait N seconds, do B". Use `async/await` for I/O, heavy computation, or any scenario where you need a real thread.
+
+```csharp
+// Coroutine — right tool for timed game sequences
+IEnumerator FadeOut()
+{
+    float alpha = 1f;
+    while (alpha > 0f)
+    {
+        alpha -= Time.deltaTimeF;
+        SetAlpha(alpha);
+        yield return null;
+    }
+}
+
+// async/await — right tool for file I/O
+public async System.Threading.Tasks.Task SaveGameAsync(string path)
+{
+    byte[] data = SerializeGame();
+    await System.IO.File.WriteAllBytesAsync(path, data);
+    Debug.Log("Save complete.");
+}
+```

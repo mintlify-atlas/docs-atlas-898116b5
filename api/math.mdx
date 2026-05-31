@@ -1,0 +1,505 @@
+---
+title: 'Math Library Reference — Vectors, Quaternions, and Utilities'
+sidebarTitle: 'Math'
+description: 'Reference for Prowl's math library: double/float Vector types, Quaternion, Matrix4x4, Ray, Bounds, Rect, Transform, and Mathf/MathD utilities.'
+---
+
+Prowl's math library provides double-precision vector and matrix types that mirror the Unity-style API while giving full 64-bit accuracy — critical for large open worlds and high-precision simulations. The core types (`Vector2`, `Vector3`, `Vector4`, `Quaternion`, `Matrix4x4`) are value types (`struct`) with aggressive-inlining annotations. Convenience `.ToFloat()` methods bridge to `System.Numerics` types required by Veldrid and other float-based libraries. The `MathD` and `Mathf` static utility classes wrap `System.Math` with concise names and add higher-level operations like `Lerp`, `PingPong`, `Smooth01`, and `ClampMagnitude`.
+
+---
+
+## Vector Types
+
+### Vector2
+
+Double-precision 2D vector.
+
+```csharp
+public struct Vector2 : IEquatable<Vector2>, IFormattable
+```
+
+| Member | Type | Description |
+|---|---|---|
+| `x`, `y` | `double` | Components |
+| `magnitude` | `double` | Length: `√(x²+y²)` |
+| `sqrMagnitude` | `double` | Squared length |
+| `normalized` | `Vector2` | Unit vector |
+| `Vector2.zero` | static | `(0, 0)` |
+| `Vector2.one` | static | `(1, 1)` |
+| `Normalize(v)` | static | Returns unit vector |
+| `Dot(a, b)` | static | Dot product |
+| `Distance(a, b)` | static | Euclidean distance |
+| `Lerp(a, b, t)` | via `MathD` | Linear interpolation |
+| `Scale(v, scale)` | static | Component-wise multiply |
+| `ToFloat()` | instance | Converts to `System.Numerics.Vector2` |
+
+---
+
+### Vector3
+
+Double-precision 3D vector. The most frequently used math type in Prowl.
+
+```csharp
+public struct Vector3 : IEquatable<Vector3>, IFormattable
+```
+
+| Member | Type | Description |
+|---|---|---|
+| `x`, `y`, `z` | `double` | Components |
+| `magnitude` | `double` | Length: `√(x²+y²+z²)` |
+| `sqrMagnitude` | `double` | Squared length |
+| `normalized` | `Vector3` | Unit vector (instance property) |
+| `Vector3.zero` | static | `(0, 0, 0)` |
+| `Vector3.one` | static | `(1, 1, 1)` |
+| `Vector3.right` | static | `(1, 0, 0)` |
+| `Vector3.left` | static | `(-1, 0, 0)` |
+| `Vector3.up` | static | `(0, 1, 0)` |
+| `Vector3.down` | static | `(0, -1, 0)` |
+| `Vector3.forward` | static | `(0, 0, 1)` |
+| `Vector3.backward` | static | `(0, 0, -1)` |
+| `Vector3.infinity` | static | `(∞, ∞, ∞)` |
+| `Normalize(v)` | static | Returns unit vector |
+| `Dot(a, b)` | static | Dot product |
+| `Cross(a, b)` | static | Cross product |
+| `Distance(a, b)` | static | Euclidean distance |
+| `AngleBetween(from, to)` | static | Angle in radians |
+| `Scale(v, scale)` | static | Component-wise multiply |
+| `Transform(v, m)` | static | Transform by `Matrix4x4` |
+| `IsFinate()` | instance | `true` if no NaN or infinity |
+| `ToFloat()` | instance | Converts to `System.Numerics.Vector3` |
+
+---
+
+### Vector4
+
+Double-precision 4D vector.
+
+```csharp
+public struct Vector4 : IEquatable<Vector4>, IFormattable
+```
+
+| Member | Type | Description |
+|---|---|---|
+| `x`, `y`, `z`, `w` | `double` | Components |
+| `xyz` | `Vector3` | First three components as `Vector3` |
+| `magnitude` | `double` | Length |
+| `sqrMagnitude` | `double` | Squared length |
+| `normalized` | `Vector4` | Unit vector |
+| `Normalize(v)` | static | Returns unit vector |
+| `Dot(a, b)` | static | Dot product |
+| `Transform(v, m)` | static | Transform by `Matrix4x4` |
+| `ToFloat()` | instance | Converts to `System.Numerics.Vector4` |
+
+---
+
+### Integer Vector Types
+
+Prowl provides integer variants for pixel coordinates, grid indices, and similar discrete quantities.
+
+| Type | Components | Common use |
+|---|---|---|
+| `Vector2Int` | `int x, y` | Screen/texture coordinates |
+| `Vector3Int` | `int x, y, z` | Voxel/grid positions, texture rect origins |
+| `Vector4Int` | `int x, y, z, w` | 4-component integer data |
+
+Each provides standard arithmetic operators, indexer access, `zero`, `one`, and conversion operators to their `double` counterparts.
+
+---
+
+## Quaternion
+
+Double-precision quaternion for representing 3D rotations.
+
+```csharp
+public struct Quaternion : IEquatable<Quaternion>
+```
+
+| Member | Type | Description |
+|---|---|---|
+| `x`, `y`, `z`, `w` | `double` | Components |
+| `eulerAngles` | `Vector3` | Gets/sets Euler angles in degrees |
+| `Quaternion.identity` | static | `(0, 0, 0, 1)` — no rotation |
+| `Magnitude()` | instance | Length |
+| `SqrMagnitude()` | instance | Squared length |
+| `ToEuler()` | instance | Returns Euler angles in degrees |
+| `Normalize(q)` | static | Returns unit quaternion |
+| `NormalizeSafe(q)` | static | Returns identity if magnitude is near zero |
+| `Conjugate(q)` | static | Negates x, y, z |
+| `Inverse(q)` | static | Multiplicative inverse |
+| `Euler(x, y, z)` | static | From degree Euler angles |
+| `Euler(Vector3)` | static | From degree Euler vector |
+| `AngleAxis(angle, axis)` | static | From axis (normalised) and angle in **radians** |
+| `Slerp(a, b, t)` | static | Spherical interpolation |
+| `Lerp(a, b, t)` | static | Linear interpolation (not normalised) |
+| `LookRotation(fwd, up)` | static | Rotation looking along `fwd` |
+| `RotateTowards(from, to, step)` | static | Clamp-stepped rotation |
+| `Dot(a, b)` | static | Quaternion dot product |
+| `operator *` | — | Quaternion × Quaternion (compose) or Quaternion × Vector3 (rotate) |
+
+```csharp
+// Rotate 90° around the Y axis
+Quaternion rot = Quaternion.Euler(0, 90, 0);
+
+// Compose rotations
+Quaternion combined = parentRot * childRot;
+
+// Rotate a direction vector
+Vector3 rotated = myRotation * Vector3.forward;
+```
+
+---
+
+## Matrix4x4
+
+Double-precision 4×4 matrix used for transforms, projections, and view matrices.
+
+```csharp
+public struct Matrix4x4 : IEquatable<Matrix4x4>
+```
+
+### Properties
+
+| Member | Description |
+|---|---|
+| `M11`–`M44` | Individual double elements |
+| `M1`–`M4` | Row accessors as `Vector4` |
+| `Translation` | Gets/sets the translation component (M41, M42, M43) |
+| `Identity` | Static identity matrix |
+| `IsIdentity` | Whether all off-diagonal elements are zero and diagonal is one |
+
+### Factory Methods
+
+| Method | Description |
+|---|---|
+| `TRS(pos, rot, scale)` | Translation × Rotation × Scale matrix |
+| `CreateTranslation(x, y, z)` | Pure translation |
+| `CreateScale(x, y, z)` | Non-uniform scale |
+| `CreateScale(scale)` | Uniform scale |
+| `CreateRotationX/Y/Z(radians)` | Axis-aligned rotation |
+| `CreateFromAxisAngle(axis, angle)` | Arbitrary axis rotation |
+| `CreateFromQuaternion(q)` | From quaternion |
+| `CreatePerspectiveFieldOfView(fov, aspect, near, far)` | Left-handed perspective |
+| `CreatePerspectiveFieldOfViewRightHanded(fov, aspect, near, far)` | Right-handed perspective |
+| `CreateOrthographic(w, h, near, far)` | Left-handed orthographic |
+| `CreateOrthographicOffCenter(…)` | Off-centre orthographic |
+| `CreateLookAt(pos, target, up)` | Left-handed look-at view matrix |
+| `CreateLookAtRightHanded(pos, target, up)` | Right-handed look-at |
+| `CreateLookTo(pos, dir, up)` | Look-towards view matrix |
+| `CreateBillboard(…)` | Billboard matrix facing camera |
+| `FromFloat(System.Numerics.Matrix4x4)` | Converts from float matrix |
+
+### Instance Methods
+
+| Method | Description |
+|---|---|
+| `MultiplyPoint(Vector3)` | Transforms a point (applies translation) |
+| `Invert()` | Returns the inverse, or identity if not invertible |
+| `Decompose(out scale, out rot, out trans)` | Decomposes into TRS components |
+| `Transpose()` | Returns the transposed matrix |
+| `ToFloat()` | Converts to `System.Numerics.Matrix4x4` |
+
+```csharp
+// Build a world matrix
+Matrix4x4 world = Matrix4x4.TRS(position, rotation, scale);
+
+// Build a GPU perspective projection
+Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(
+    MathD.PI / 3.0,   // 60° FOV
+    aspectRatio, 0.1, 1000.0);
+proj = Graphics.GetGPUProjectionMatrix(proj);
+```
+
+---
+
+## Transform (Component)
+
+`Transform` is a `class` (not a struct) attached to every `GameObject`. It manages the local/world position, rotation, and scale hierarchy.
+
+```csharp
+public class Transform : ICloneExplicit
+```
+
+### Position
+
+<ResponseField name="position" type="Vector3">World-space position. Setting automatically computes the correct local position.</ResponseField>
+<ResponseField name="localPosition" type="Vector3">Local position relative to the parent.</ResponseField>
+
+### Rotation
+
+<ResponseField name="rotation" type="Quaternion">World-space rotation.</ResponseField>
+<ResponseField name="localRotation" type="Quaternion">Local rotation relative to the parent.</ResponseField>
+<ResponseField name="eulerAngles" type="Vector3">World Euler angles in degrees.</ResponseField>
+<ResponseField name="localEulerAngles" type="Vector3">Local Euler angles in degrees.</ResponseField>
+
+### Scale
+
+<ResponseField name="localScale" type="Vector3">Local scale (author-set).</ResponseField>
+<ResponseField name="lossyScale" type="Vector3">Effective world scale (product of all parent scales).</ResponseField>
+
+### Direction Vectors
+
+<ResponseField name="forward" type="Vector3">`rotation * Vector3.forward`</ResponseField>
+<ResponseField name="right" type="Vector3">`rotation * Vector3.right`</ResponseField>
+<ResponseField name="up" type="Vector3">`rotation * Vector3.up`</ResponseField>
+
+### Matrices
+
+<ResponseField name="localToWorldMatrix" type="Matrix4x4">Cached TRS matrix from local to world space.</ResponseField>
+<ResponseField name="worldToLocalMatrix" type="Matrix4x4">Inverse of `localToWorldMatrix`.</ResponseField>
+
+### Methods
+
+```csharp
+public void Translate(Vector3 translation, Transform? relativeTo = null)
+public void Rotate(Vector3 eulerAngles, bool relativeToSelf = true)
+public void Rotate(Vector3 axis, double angle, bool relativeToSelf = true)
+public void RotateAround(Vector3 point, Vector3 axis, double angle)
+public void LookAt(Vector3 worldPosition, Vector3 worldUp)
+
+public Vector3    TransformPoint(Vector3 inPosition)
+public Vector3    InverseTransformPoint(Vector3 inPosition)
+public Vector3    TransformDirection(Vector3 inDirection)
+public Vector3    InverseTransformDirection(Vector3 inDirection)
+public Vector3    TransformVector(Vector3 inVector)
+public Vector3    InverseTransformVector(Vector3 inVector)
+public Quaternion TransformRotation(Quaternion inRotation)
+public Quaternion InverseTransformRotation(Quaternion worldRotation)
+```
+
+---
+
+## Bounds
+
+Axis-aligned bounding box (AABB) defined by `min` and `max` corners.
+
+```csharp
+public struct Bounds : IEquatable<Bounds>
+```
+
+| Member | Description |
+|---|---|
+| `min`, `max` | Corner vectors (stored directly) |
+| `center` | `(min + max) * 0.5` — get/set |
+| `extents` | Half-size — get/set |
+| `size` | `max - min` — get/set |
+| `Bounds(center, size)` | Constructor |
+| `Contains(Bounds)` → `ContainmentType` | Disjoint / Contains / Intersects |
+| `Contains(Vector3)` → `bool` | Point containment |
+| `Intersects(Bounds)` → `bool` | Overlap test |
+| `Transform(Matrix4x4)` | Returns a new AABB enclosing the transformed box |
+| `Expand(Vector3)` | Expands the box to include a point |
+
+---
+
+## Ray
+
+A ray defined by an origin point and a direction vector.
+
+```csharp
+public struct Ray : IEquatable<Ray>
+{
+    public Vector3 origin;
+    public Vector3 direction;
+}
+```
+
+| Method | Returns | Description |
+|---|---|---|
+| `Ray(position, direction)` | — | Constructor |
+| `Position(double distance)` | `Vector3` | Point along the ray at `origin + direction * distance` |
+| `Intersects(Bounds box)` | `double?` | Distance to AABB intersection, or `null` if no hit |
+| `Intersects(Plane plane)` | `double?` | Distance to plane intersection |
+| `Intersects(v1, v2, v3, cullBackface)` | `double?` | Möller–Trumbore triangle intersection |
+
+---
+
+## Rect
+
+A 2D rectangle defined by `Min` (upper-left) and `Max` (lower-right) `Vector2` points.
+
+```csharp
+public struct Rect
+{
+    public Vector2 Min; // Upper-left
+    public Vector2 Max; // Lower-right
+}
+```
+
+| Member | Description |
+|---|---|
+| `x`, `y` | Position of the left/top edge |
+| `width`, `height` | Dimensions |
+| `Position` | Gets/sets `Min` |
+| `Center` | `(Min + Max) / 2` |
+| `Rect.Empty` | Rect with inverted extremes |
+| `Rect.Zero` | Zero-sized rect at origin |
+| `CreateFromMinMax(min, max)` | Static factory |
+| `Contains(Vector2)` | Point-in-rect test |
+| `Overlaps(Rect)` | Rectangle overlap test |
+
+---
+
+## Plane
+
+An infinite plane defined by a normal and a distance from the origin.
+
+```csharp
+public struct Plane
+{
+    public Vector3 normal;
+    public double  distance;
+}
+```
+
+`distance` is the signed distance from the world origin along `normal`. Intersection with a `Ray` is computed via `Ray.Intersects(Plane)`.
+
+---
+
+## BoundingFrustum
+
+Camera view-frustum built from a view-projection matrix. Used for frustum culling.
+
+```csharp
+BoundingFrustum frustum = new BoundingFrustum(viewProjectionMatrix);
+ContainmentType result  = frustum.Contains(bounds);
+Vector3[]       corners = frustum.GetCorners(); // 8 frustum corner points
+```
+
+---
+
+## MathD — Double Utilities
+
+`MathD` is a static class of `double` math helpers in `Prowl.Runtime`.
+
+### Constants
+
+| Constant | Value | Description |
+|---|---|---|
+| `MathD.PI` | `3.14159265359` | π |
+| `MathD.TAU` | `6.28318530717959` | 2π |
+| `MathD.E` | `2.71828182846` | Euler's number |
+| `MathD.SQRT2` | `1.41421356237` | √2 |
+| `MathD.GOLDEN_RATIO` | `1.61803398875` | φ |
+| `MathD.Deg2Rad` | `TAU / 360` | Multiply degrees to get radians |
+| `MathD.Rad2Deg` | `360 / TAU` | Multiply radians to get degrees |
+| `MathD.Infinity` | `double.PositiveInfinity` | — |
+| `MathD.NegativeInfinity` | `double.NegativeInfinity` | — |
+| `MathD.Small` | `0.000001` | Tolerance for approximate equality |
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `Sin(x)`, `Cos(x)`, `Tan(x)` | Trigonometric functions |
+| `Asin(x)`, `Acos(x)`, `Atan(x)` | Inverse trig |
+| `Atan(y, x)` | `atan2(y, x)` |
+| `Sqrt(x)`, `Pow(x, e)`, `Exp(x)` | Power / root |
+| `Abs(x)` | Absolute value |
+| `Log(x)`, `Log(x, base)`, `Log10(x)` | Logarithms |
+| `Clamp(v, min, max)` | Clamp (double and int overloads) |
+| `Clamp01(v)` | Clamp to `[0, 1]` |
+| `Min(params double[])` / `Max(params double[])` | Varargs min/max |
+| `Floor(x)`, `FloorToInt(x)` | Floor |
+| `Ceil(x)`, `CeilToInt(x)` | Ceiling |
+| `Round(x)`, `RoundToInt(x)` | Rounding with `MidpointRounding` |
+| `Sign(x)` | Returns `1` or `-1` |
+| `Frac(x)` | Fractional part: `x - Floor(x)` |
+| `Repeat(v, length)` | Modulo looping in `[0, length]` |
+| `PingPong(t, length)` | Ping-pong oscillation |
+| `Lerp(a, b, t)` | Linear interpolation (scalar, Vector2, Vector3, Vector4 overloads) |
+| `LerpClamped(a, b, t)` | Lerp with `t` clamped to `[0,1]` |
+| `LerpSmooth(a, b, t)` | Smoothstep lerp |
+| `InverseLerp(a, b, t)` | Inverse linear interpolation |
+| `InverseLerpClamped(a, b, t)` | Clamped inverse lerp |
+| `LerpAngle(a, b, t)` | Lerp over shortest arc between angles |
+| `Smooth01(x)` | `x²(3 - 2x)` smoothstep |
+| `Smoother01(x)` | `x³(x(6x - 15) + 10)` Ken Perlin's smoother |
+| `MoveTowards(current, target, maxDelta)` | Moves current toward target by at most maxDelta |
+| `ClampMagnitude(v, min, max)` | Clamps vector length (Vector2 and Vector3 overloads) |
+| `Angle(q, r)` | Angle in radians between two quaternions |
+| `ApproximatelyEquals(a, b)` | Checks if `|a - b| < Small` |
+| `IsValid(x)` | `true` if not NaN and not infinity |
+
+---
+
+## Mathf — Float Utilities
+
+`Mathf` provides approximate-equality helpers for single-precision `System.Numerics` types:
+
+```csharp
+Mathf.ApproximatelyEquals(float a, float b)
+Mathf.ApproximatelyEquals(System.Numerics.Vector2 a, System.Numerics.Vector2 b)
+Mathf.ApproximatelyEquals(System.Numerics.Vector3 a, System.Numerics.Vector3 b)
+Mathf.ApproximatelyEquals(System.Numerics.Vector4 a, System.Numerics.Vector4 b)
+```
+
+Uses `float.Epsilon` as the tolerance. Use this when comparing `System.Numerics` types from Veldrid interop.
+
+---
+
+## Bool3
+
+A memory-efficient structure packing three `bool` values into a single `byte`.
+
+```csharp
+public struct Bool3 : IEquatable<Bool3>
+{
+    public bool x, y, z;
+}
+```
+
+| Member | Description |
+|---|---|
+| `Bool3(x, y, z)` | Constructor |
+| `Bool3(value)` | All-same constructor |
+| `Bool3.zero` | `(false, false, false)` |
+| `Bool3.one` | `(true, true, true)` |
+| `Any()` | `true` if any component is `true` |
+| `All()` | `true` if all components are `true` |
+| `CountTrue()` | Number of `true` components |
+| `SetAll(value)` | Set all components at once |
+| `ToArray()` | Returns `bool[]` of length 3 |
+| `operator &` | Component-wise AND |
+| `operator \|` | Component-wise OR |
+| `operator ^` | Component-wise XOR |
+| `operator !` | Component-wise NOT |
+| `implicit bool → Bool3` | Sets all components |
+| `explicit Bool3 → byte` | Raw backing byte |
+
+---
+
+## Random
+
+Static helper for random values using `System.Random.Shared`.
+
+```csharp
+public static class Random
+```
+
+| Member | Returns | Description |
+|---|---|---|
+| `Value` | `double` | Uniform `[0, 1)` |
+| `Sign` | `double` | `-1` or `+1` with equal probability |
+| `Range(double min, double max)` | `double` | Uniform in `[min, max]` |
+| `Range(int min, int max)` | `int` | Uniform in `[min, max)` |
+| `Boolean` | `bool` | 50/50 `true` or `false` |
+| `Angle` | `double` | Uniform angle in `[0, TAU)` |
+| `OnUnitCircle` | `Vector2` | Random point on unit circle |
+| `InUnitCircle` | `Vector2` | Random point inside unit circle |
+| `InUnitSquare` | `Vector2` | Random `(x, y)` in `[0,1]²` |
+| `OnUnitSphere` | `Vector3` | Random point on unit sphere |
+| `InUnitSphere` | `Vector3` | Random point inside unit sphere |
+| `InUnitCube` | `Vector3` | Random `(x, y, z)` in `[0,1]³` |
+| `Rotation` | `Quaternion` | Uniformly distributed rotation |
+| `Color` | `Color` | Random RGBA colour |
+
+```csharp
+// Random direction
+Vector3 dir = Random.OnUnitSphere;
+
+// Random pitch variation
+float pitch = (float)Random.Range(0.9, 1.1);
+
+// Random spawn inside area
+Vector3 spawn = transform.position + Random.InUnitSphere * spawnRadius;
+```

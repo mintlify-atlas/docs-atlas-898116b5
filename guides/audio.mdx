@@ -1,0 +1,236 @@
+---
+title: 'Audio Playback and 3D Sound in Prowl Engine'
+sidebarTitle: 'Audio'
+description: 'Play sounds in Prowl using AudioSource and AudioListener components, control volume and pitch, enable 3D positional audio, and load AudioClip assets.'
+---
+
+Prowl's audio system is built on top of OpenAL, giving you hardware-accelerated spatial sound out of the box. The engine exposes a clean, component-driven API through `AudioSource` and `AudioListener`, while the static `AudioSystem` class lets you fire one-shot sounds and background music without attaching anything to a GameObject. Whether you need a looping ambient track, a 3D footstep effect that fades with distance, or a UI click that ignores the listener position entirely, Prowl handles it through a unified pool of `ActiveAudio` handles that you can adjust in real-time.
+
+## Audio System Initialization
+
+`AudioSystem.Initialize()` is called automatically by the engine at startup. It attempts to create an `OpenALEngine`; if that fails (for example on a headless server), it silently falls back to `NullAudioEngine` so the rest of your code continues to run without modification.
+
+```csharp
+// Engine calls this for you — shown here for reference only
+AudioSystem.Initialize();
+
+// Access the active backend at runtime
+AudioEngine backend = AudioSystem.Engine;
+```
+
+<Note>
+Only one `AudioListener` may be active at a time. If a second listener is registered, Prowl logs a warning and ignores it. Destroy the first listener before creating a new one when switching cameras.
+</Note>
+
+## Components
+
+### AudioListener
+
+`AudioListener` tells the engine where the "ears" are in your scene. Attach it to your main camera or player GameObject. Every frame it forwards the transform's position, velocity, and orientation to the OpenAL backend so that 3D sounds are spatialized correctly.
+
+```csharp
+// Add via code — usually done in the editor Inspector
+AudioListener listener = cameraGameObject.AddComponent<AudioListener>();
+```
+
+There is nothing else to configure. The component registers itself with `AudioSystem` on `OnEnable` and unregisters on `OnDisable`, so enabling/disabling the camera naturally updates which listener is active.
+
+### AudioSource
+
+`AudioSource` is the workhorse component for scene-attached sounds. It manages its own `ActiveAudio` source internally and updates the 3D position every frame relative to the registered listener.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `Clip` | `AssetRef<AudioClip>` | — | The audio clip to play |
+| `PlayOnAwake` | `bool` | `true` | Play automatically when the component starts |
+| `Looping` | `bool` | `false` | Loop the clip continuously |
+| `Volume` | `float` | `1.0` | Gain multiplier (0–1) |
+| `MaxDistance` | `float` | `32.0` | Distance at which the sound is completely silent |
+
+```csharp
+public class FootstepPlayer : MonoBehaviour
+{
+    public AssetRef<AudioClip> StepClip;
+    private AudioSource _source;
+
+    public override void Awake()
+    {
+        _source = GameObject.AddComponent<AudioSource>();
+        _source.Clip = StepClip;
+        _source.PlayOnAwake = false;
+        _source.Looping = false;
+        _source.Volume = 0.8f;
+        _source.MaxDistance = 20f;
+    }
+
+    public void Step()
+    {
+        _source.Play();
+    }
+}
+```
+
+Call `_source.Stop()` at any time to halt playback. When the component is disabled it stops automatically; when it is destroyed the underlying OpenAL source is disposed.
+
+## AudioClip Asset
+
+`AudioClip` is a serialized runtime asset that stores raw PCM audio data together with metadata (sample rate, bit depth, channel count). Load it through the asset reference system:
+
+```csharp
+// Declared as a serialized field so it appears in the Inspector
+public AssetRef<AudioClip> MusicClip;
+
+// Check availability before use
+if (MusicClip.IsAvailable)
+{
+    AudioClip clip = MusicClip.Res!;
+    Debug.Log($"Clip: {clip.Name}, Duration: {clip.Duration}s, Format: {clip.Format}");
+}
+```
+
+The `AudioClipImporter` handles `.wav`, `.wave`, and `.ogg` files. Once imported, the clip is cached in `AudioSystem` as an `AudioBuffer` so repeated calls to `PlaySound` do not re-upload data to the GPU.
+
+## AudioSystem API
+
+For sounds that do not need a persistent scene object — explosions, UI clicks, one-shot voice lines — call `AudioSystem.PlaySound` directly. All overloads return an `ActiveAudio` handle.
+
+```csharp
+// Simplest: play a clip at full volume from the listener's position
+ActiveAudio handle = AudioSystem.PlaySound(clip);
+
+// Play with custom volume and pitch
+ActiveAudio handle2 = AudioSystem.PlaySound(clip, volume: 0.5f, pitch: 1.2f);
+
+// Play at an absolute world-space position (3D)
+ActiveAudio handle3 = AudioSystem.PlaySound(
+    clip,
+    volume: 1f,
+    pitch: 1f,
+    position: explosionPos,
+    positionKind: AudioPositionKind.AbsoluteWorld
+);
+```
+
+<Tip>
+Use `AudioPositionKind.ListenerRelative` (the default) for UI sounds and music so they are never attenuated by distance. Use `AudioPositionKind.AbsoluteWorld` for any sound that should come from a point in the scene.
+</Tip>
+
+## ActiveAudio Handle
+
+`PlaySound` returns an `ActiveAudio` object that lets you modify or stop the sound while it is still playing.
+
+```csharp
+public abstract class ActiveAudio : IDisposable
+{
+    public abstract float Gain { get; set; }          // Volume (0–1)
+    public abstract float Pitch { get; set; }          // Pitch multiplier
+    public abstract float MaxDistance { get; set; }    // Attenuation distance
+    public abstract bool Looping { get; set; }
+    public abstract Vector3 Position { get; set; }
+    public abstract Vector3 Direction { get; set; }
+    public abstract AudioPositionKind PositionKind { get; set; }
+    public abstract float PlaybackPosition { get; set; } // 0–1 normalised
+    public abstract bool IsPlaying { get; }
+    public abstract void Play(AudioBuffer buffer);
+    public abstract void Stop();
+    public abstract void Dispose();
+}
+```
+
+```csharp
+ActiveAudio music = AudioSystem.PlaySound(musicClip);
+music.Looping = true;
+music.Gain = 0.3f;   // background music at 30 % volume
+
+// Fade or stop later
+music.Stop();
+```
+
+`ActiveAudio` handles are managed by the engine's internal source pool. Stopped or finished sources are automatically returned to the pool by `AudioSystem.UpdatePool()`, which the engine calls each frame. Do not call `Dispose()` on handles returned from `PlaySound` — only call it on sources you created directly via `AudioSystem.Engine.CreateAudioSource()`.
+
+## Code Examples
+
+<Tabs>
+  <Tab title="Background Music">
+    ```csharp
+    public class MusicManager : MonoBehaviour
+    {
+        public AssetRef<AudioClip> ThemeClip;
+        private ActiveAudio _music;
+
+        public override void Awake()
+        {
+            if (!ThemeClip.IsAvailable) return;
+            _music = AudioSystem.PlaySound(ThemeClip.Res!, volume: 0.4f, pitch: 1f);
+            _music.Looping = true;
+            _music.PositionKind = AudioPositionKind.ListenerRelative;
+        }
+
+        public override void OnDestroy()
+        {
+            _music?.Stop();
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="3D Footstep">
+    ```csharp
+    public class CharacterSounds : MonoBehaviour
+    {
+        public AssetRef<AudioClip> FootstepClip;
+
+        public void PlayFootstep()
+        {
+            if (!FootstepClip.IsAvailable) return;
+
+            AudioSystem.PlaySound(
+                FootstepClip.Res!,
+                volume: 0.7f,
+                pitch: Random.Range(0.9f, 1.1f),
+                position: GameObject.Transform.position,
+                positionKind: AudioPositionKind.AbsoluteWorld
+            );
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="One-Shot Effect">
+    ```csharp
+    public class ExplosionEffect : MonoBehaviour
+    {
+        public AssetRef<AudioClip> BoomClip;
+
+        public void Explode(Vector3 worldPos)
+        {
+            if (!BoomClip.IsAvailable) return;
+
+            ActiveAudio shot = AudioSystem.PlaySound(
+                BoomClip.Res!,
+                volume: 1f,
+                pitch: 1f,
+                position: worldPos,
+                positionKind: AudioPositionKind.AbsoluteWorld
+            );
+
+            // MaxDistance controls the falloff radius
+            shot.MaxDistance = 50f;
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## AudioBuffer and AudioBufferPool
+
+`AudioBuffer` is the low-level GPU-side representation of decoded PCM data. `AudioSystem.GetAudioBuffer(clip)` lazily uploads the clip and caches the result in a dictionary keyed by `AudioClip` instance. You typically never need to create or destroy buffers manually — they live for the lifetime of the engine session and are disposed in `AudioSystem.Dispose()`.
+
+```csharp
+// Internally used by AudioSystem — shown for reference
+AudioBuffer buffer = AudioSystem.GetAudioBuffer(myClip);
+ActiveAudio src = AudioSystem.Engine.CreateAudioSource();
+src.Play(buffer);
+```
+
+<Warning>
+Calling `AudioSystem.Dispose()` is done automatically by the engine on shutdown. Do not call it from game code unless you are writing a custom engine host.
+</Warning>

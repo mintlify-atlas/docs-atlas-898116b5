@@ -1,0 +1,279 @@
+---
+title: 'Physics Simulation with Jitter2 in Prowl'
+sidebarTitle: 'Physics'
+description: 'Set up physics simulation in Prowl using Jitter2: configure Rigidbody3D, perform raycasts, set layer collision rules, and tune physics settings.'
+---
+
+Prowl's physics system is powered by [Jitter2](https://github.com/notgiven688/jitterphysics2), a high-performance double-precision rigid-body simulation library. The static `Physics` class acts as the bridge between your game code and the underlying `Jitter2.World`, driving the simulation forward every frame via `SceneManager` and exposing ray-casting, layer filtering, and force application APIs that feel natural alongside the rest of the engine. Everything from gravity to solver iterations is surfaced through a project-wide `PhysicsSetting` singleton so you can tune the entire simulation from a single place without touching code.
+
+## Physics Settings
+
+`PhysicsSetting` is a `ScriptableSingleton` stored in your project settings. It controls every global parameter of the Jitter2 world.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `Gravity` | `Vector3` | `(0, -9.81, 0)` | World gravity vector applied to every non-static body. |
+| `SolverIterations` | `int` | `6` | Position-solver passes per step (1–16). Higher = more accurate stacks. |
+| `RelaxIterations` | `int` | `4` | Velocity-solver relaxation passes (0–16). |
+| `Substep` | `int` | `1` | Physics sub-steps per frame tick (1–16). More sub-steps improve tunnelling resistance. |
+| `TargetFrameRate` | `int` | `50` | The target fixed-update rate (5–120 Hz). Sets `Time.fixedDeltaTime`. |
+| `AllowSleep` | `bool` | `true` | Allows inactive bodies to deactivate and skip simulation. |
+| `UseMultithreading` | `bool` | `true` | Spreads the Jitter2 step across available CPU cores. |
+| `AutoSyncTransforms` | `bool` | `true` | Writes the GameObject `Transform` into the rigid body before each step. |
+
+<Note>
+`PhysicsSetting` is serialised to `PhysicsSettings.projsetting` inside your project's settings folder. Changes take effect immediately at runtime — you do not need to restart the editor.
+</Note>
+
+## The Physics World
+
+The engine exposes the live Jitter2 world through `Physics.World`. You rarely need to touch it directly, but it is useful for advanced integrations such as custom constraints or querying body state.
+
+```csharp
+// Access the live Jitter2 world
+Jitter2.World world = Physics.World;
+
+// Read current gravity from the world (set via PhysicsSetting)
+var gravity = world.Gravity; // JVector
+```
+
+`Physics.Update()` is called automatically by `SceneManager` once per frame. It accumulates `Time.deltaTime`, then steps the simulation in fixed-size increments of `Time.fixedDeltaTime`, up to a maximum of 10 catch-up steps to avoid the spiral-of-death.
+
+## Rigidbody3D Component
+
+`Rigidbody3D` is the component that registers a `GameObject` with the physics world. Add it to any object that should move under physics forces. At least one `Collider` component must also be present on the same `GameObject` (or a child) to give the body a physical shape.
+
+<Steps>
+  <Step title="Add Rigidbody3D">
+    In the editor, select your `GameObject` and click **Add Component → Physics → Rigidbody3D**. The body is registered with `Physics.World` as soon as the component is enabled.
+  </Step>
+  <Step title="Configure mass and material">
+    Set `Mass` (kg), `Friction` (0–1), and `Restitution` (0–1 bounciness) in the Inspector or at runtime via code.
+  </Step>
+  <Step title="Attach colliders">
+    Add one or more collider components (e.g. `BoxCollider`, `CapsuleCollider`) on the same `GameObject` or its children. The `Rigidbody3D` will automatically collect and composite them into a single body shape.
+  </Step>
+</Steps>
+
+### Key Properties
+
+```csharp
+Rigidbody3D rb = GetComponent<Rigidbody3D>();
+
+// Toggle static/kinematic
+rb.IsStatic = false;
+
+// Gravity
+rb.AffectedByGravity = true;
+
+// Mass (must be > 0)
+rb.Mass = 5.0;
+
+// Material properties (0–1)
+rb.Friction    = 0.4;
+rb.Restitution = 0.1;
+
+// Read velocity
+Vector3 vel = rb.Velocity;
+
+// Read/write angular velocity
+rb.AngularVelocity = Vector3.zero;
+```
+
+### Applying Forces
+
+```csharp
+Rigidbody3D rb = GetComponent<Rigidbody3D>();
+
+// Apply a central force (Newtons, continuous — call each FixedUpdate)
+rb.AddForce(new Vector3(0, 500, 0));
+
+// Apply force at a specific world-space point (creates torque)
+rb.AddForceAtPosition(new Vector3(100, 0, 0), worldHitPoint);
+
+// Apply a torque impulse
+rb.AddTorque(new Vector3(0, 10, 0));
+
+// Direct velocity manipulation
+rb.Velocity = new Vector3(0, 10, 0); // launch upward
+```
+
+<Warning>
+`AddForce` accumulates force for the current physics step. If you want an instant velocity change (impulse), set `rb.Velocity` directly.
+</Warning>
+
+## Raycasting
+
+`Physics` provides six `Raycast` overloads covering all common use cases. The direction vector is normalised automatically.
+
+<Tabs>
+  <Tab title="Boolean check">
+    Returns `true` if any collider is hit — no allocation, fastest option.
+
+    ```csharp
+    bool hit = Physics.Raycast(transform.position, Vector3.down);
+    if (hit)
+        Debug.Log("Something is below!");
+    ```
+  </Tab>
+  <Tab title="Hit info">
+    Populates a `RaycastHit` struct with detailed contact data.
+
+    ```csharp
+    if (Physics.Raycast(transform.position, transform.forward, out RaycastHit hit))
+    {
+        Debug.Log($"Hit '{hit.rigidbody?.GameObject.Name}' " +
+                  $"at {hit.point}, normal {hit.normal}, dist {hit.distance:F2}m");
+    }
+    ```
+  </Tab>
+  <Tab title="Distance-limited">
+    Ignores hits beyond `maxDistance` units.
+
+    ```csharp
+    float range = 10.0f;
+    if (Physics.Raycast(muzzle.position, muzzle.forward, range, out RaycastHit hit))
+    {
+        ApplyDamage(hit.rigidbody, 25);
+    }
+    ```
+  </Tab>
+  <Tab title="Layer-masked">
+    Only tests against bodies on the specified `LayerMask`.
+
+    ```csharp
+    LayerMask groundMask = LayerMask.FromLayer(0); // layer 0
+    if (Physics.Raycast(transform.position, Vector3.down,
+                        out RaycastHit hit, 1.1f, groundMask))
+    {
+        isGrounded = true;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### RaycastHit Fields
+
+```csharp
+public struct RaycastHit
+{
+    public bool         hit;       // Did the ray hit anything?
+    public double       distance;  // Lambda — distance from origin to impact
+    public Vector3      normal;    // Surface normal at the hit point
+    public Vector3      point;     // World-space impact position
+    public Rigidbody3D  rigidbody; // The Rigidbody3D that was struck
+    public Transform    transform; // Transform of the struck GameObject
+}
+```
+
+<Tip>
+`hit.point` is computed as `origin + direction * distance`. When your origin is inside a collider, `distance` may be zero — guard against this in ground-check logic.
+</Tip>
+
+## Layer Collision Matrix
+
+Prowl uses a symmetric 32×32 boolean matrix (stored in `PhysicsSetting`) to determine which physics layers can collide with each other. Use `Physics.SetLayerCollision` to configure layer interactions at runtime or in your game initialisation code.
+
+```csharp
+// Prevent enemies (layer 2) from colliding with each other
+Physics.SetLayerCollision(2, 2, false);
+
+// Allow projectiles (layer 3) to collide with enemies (layer 2)
+Physics.SetLayerCollision(3, 2, true);
+
+// Disable all collisions for a specific layer
+Physics.SetLayerCollisions(4, false);
+
+// Re-enable all layer-to-layer collisions globally
+Physics.SetAllCollisions(true);
+
+// Query whether two layers currently collide
+bool collides = Physics.GetLayerCollision(1, 3);
+```
+
+The `LayerFilter` broadcast-phase filter reads this matrix before any narrow-phase work, so filtered-out pairs incur almost zero CPU cost.
+
+## Practical Examples
+
+<Accordion title="Ground check with downward raycast">
+```csharp
+using Prowl.Runtime;
+
+public class GroundChecker : MonoBehaviour
+{
+    public float checkDistance = 1.1f;
+    public bool IsGrounded { get; private set; }
+
+    public override void Update()
+    {
+        // Cast slightly longer than half the character height
+        LayerMask groundOnly = LayerMask.FromLayer(0);
+        IsGrounded = Physics.Raycast(
+            Transform.position,
+            Vector3.down,
+            out RaycastHit hit,
+            checkDistance,
+            groundOnly);
+
+        if (IsGrounded)
+            Debug.Log($"Standing on layer {hit.rigidbody?.GameObject.layerIndex}");
+    }
+}
+```
+</Accordion>
+
+<Accordion title="Shooting a projectile ray">
+```csharp
+using Prowl.Runtime;
+
+public class RaycastGun : MonoBehaviour
+{
+    public double range = 50.0;
+    public double damage = 25.0;
+
+    public void Shoot()
+    {
+        Vector3 origin    = Transform.position;
+        Vector3 direction = Transform.forward;
+
+        if (Physics.Raycast(origin, direction, range, out RaycastHit hit))
+        {
+            Debug.Log($"Hit at {hit.point} (dist: {hit.distance:F1}m)");
+            if (hit.rigidbody != null)
+            {
+                // Push the object away from the bullet impact
+                Vector3 impulse = direction * 300.0;
+                hit.rigidbody.AddForceAtPosition(impulse, hit.point);
+            }
+        }
+    }
+}
+```
+</Accordion>
+
+<Accordion title="Applying a jump impulse">
+```csharp
+using Prowl.Runtime;
+
+public class PlayerJump : MonoBehaviour
+{
+    public double jumpForce = 8.0;
+    private Rigidbody3D _rb;
+
+    public override void Awake()
+    {
+        _rb = GetComponent<Rigidbody3D>();
+    }
+
+    public override void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.Space))
+        {
+            // Set vertical velocity directly for a snappy jump
+            Vector3 v = _rb.Velocity;
+            _rb.Velocity = new Vector3(v.x, jumpForce, v.z);
+        }
+    }
+}
+```
+</Accordion>

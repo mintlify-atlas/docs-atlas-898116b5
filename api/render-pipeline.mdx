@@ -1,0 +1,226 @@
+---
+title: 'RenderPipeline API — Custom Rendering in Prowl'
+sidebarTitle: 'RenderPipeline'
+description: 'Reference for Prowl's RenderPipeline abstract class and DefaultRenderPipeline: implement custom rendering passes, manage renderables, and hook into camera draw.'
+---
+
+Prowl's rendering architecture is built around the `RenderPipeline` abstract class. Every frame, the engine collects all renderable objects and lights into static lists, then delegates the actual GPU work to whichever `RenderPipeline` subclass is active. The pipeline decides how to sort, batch, cull, and shade those objects, making it straightforward to swap between forward rendering, deferred rendering, or a fully custom effect without touching game code. The built-in `DefaultRenderPipeline` provides PBR forward rendering, shadow maps, a procedural sky, an infinite editor grid, and post-processing effects out of the box.
+
+## Core Abstractions
+
+### RenderPipeline (abstract class)
+
+`RenderPipeline` lives in `Prowl.Runtime.Rendering.Pipelines` and inherits from `EngineObject`. It owns two static collections shared across all pipeline instances: a flat list of `IRenderable` objects and a material-keyed dictionary of `RenderBatch` entries.
+
+#### Abstract method
+
+```csharp
+public abstract void Render(Camera camera, in RenderingData data);
+```
+
+The engine calls this once per camera per frame. Override it to issue all GPU work for that camera's view.
+
+<ParamField path="camera" type="Camera">
+  The camera whose view and projection matrices should be used for rendering.
+</ParamField>
+<ParamField path="data" type="RenderingData">
+  Auxiliary per-frame data including editor grid settings, gizmo toggles, and scene-view flags (see below).
+</ParamField>
+
+### RenderingData
+
+```csharp
+public struct RenderingData
+{
+    public bool IsSceneViewCamera;
+    public bool DisplayGrid;
+    public bool DisplayGizmo;
+    public Matrix4x4 GridMatrix;
+    public Color GridColor;
+    public Vector3 GridSizes;
+}
+```
+
+A lightweight value type passed into `Render()` carrying rendering-configuration flags for the current camera draw. `IsSceneViewCamera` distinguishes editor scene views from game cameras.
+
+### IRenderable
+
+Objects that can be drawn by a pipeline must implement `IRenderable`:
+
+```csharp
+public interface IRenderable
+{
+    Material GetMaterial();
+    int GetLayer();
+    void GetRenderingData(out PropertyState properties, out IGeometryDrawData drawData, out Matrix4x4 model);
+    void GetCullingData(out bool isRenderable, out Bounds bounds);
+}
+```
+
+`Graphics.DrawMesh` wraps a `Mesh` + `Material` pair in an internal `MeshRenderable : IRenderable` and registers it via `RenderPipeline.AddRenderable`.
+
+### IRenderableLight
+
+Lights register themselves with:
+
+```csharp
+RenderPipeline.AddLight(IRenderableLight light);
+```
+
+Implementations supply light type, direction, colour, shadow settings, and anything else the active pipeline needs to shade the scene.
+
+### RenderBatch
+
+When `AddRenderable` is called, the pipeline also inserts the renderable index into a `Dictionary<Material, RenderBatch>`:
+
+```csharp
+public struct RenderBatch
+{
+    public Material material;
+    public List<int> renderIndices;
+}
+```
+
+Pipelines iterate batches via `RenderPipeline.EnumerateBatches()`, draw all objects sharing the same material in one pass, then move to the next material. This avoids redundant pipeline state changes.
+
+## Static Pipeline API
+
+All static members below are available from any code once at least one `RenderPipeline` subclass is active.
+
+<ResponseField name="RenderableCount" type="int">
+  The number of renderables registered for the current frame.
+</ResponseField>
+
+### AddRenderable
+
+```csharp
+public static void AddRenderable(IRenderable renderable)
+```
+
+Registers a renderable for the current frame. Also inserts it into the material batch dictionary. Typically called via `Graphics.DrawMesh`.
+
+### AddLight
+
+```csharp
+public static void AddLight(IRenderableLight light)
+```
+
+Registers a light source. Called by light components during their `Update` / `OnEnable` lifecycle.
+
+### ClearRenderables
+
+```csharp
+public static void ClearRenderables()
+```
+
+Clears all registered renderables, batch indices, and lights. Called automatically by `Graphics.EndFrame()`.
+
+### EnumerateBatches
+
+```csharp
+public static IEnumerable<RenderBatch> EnumerateBatches()
+```
+
+Returns all material batches for the current frame. Each batch contains the material and the indices of all renderables using it.
+
+### GetRenderable / GetRenderables
+
+```csharp
+public static IRenderable GetRenderable(int index)
+public static IEnumerable<IRenderable> GetRenderables()
+```
+
+Access individual renderables by index or enumerate all of them.
+
+### GetLights
+
+```csharp
+public static List<IRenderableLight> GetLights()
+```
+
+Returns all lights registered for the current frame.
+
+## DefaultRenderPipeline
+
+`DefaultRenderPipeline` is Prowl's standard forward renderer. A singleton instance is available via `DefaultRenderPipeline.Default`.
+
+```csharp
+public class DefaultRenderPipeline : RenderPipeline
+```
+
+### What it does
+
+<Accordion title="Forward pass">
+  Iterates material batches produced by `EnumerateBatches()`. For each batch it binds the material, uploads per-object matrices and property states, and issues indexed draw calls. Camera-relative rendering is enabled by default (`CAMERA_RELATIVE = true`) to avoid floating-point precision loss at large world coordinates.
+</Accordion>
+
+<Accordion title="Shadow maps">
+  Renders a shadow map `RenderTexture` from the primary directional light's perspective before the main colour pass. The shadow data is uploaded into a shared `GraphicsBuffer` alongside per-light data and bound as `LightBuffer` during shading.
+</Accordion>
+
+<Accordion title="Procedural sky">
+  Renders a sky dome mesh with a procedural sky shader (`Defaults/ProceduralSky.shader`) before opaque geometry. The sky dome is loaded once from `Defaults/SkyDome.obj`.
+</Accordion>
+
+<Accordion title="Post-processing">
+  After the colour pass, post-process effects are composited through full-screen blit operations using per-camera post-process stacks.
+</Accordion>
+
+<Accordion title="Editor grid and gizmos">
+  When `RenderingData.DisplayGrid` is `true`, an infinite grid is rendered using `Defaults/Grid.shader`. When `DisplayGizmo` is `true`, the gizmo wire and solid meshes from `Debug`'s gizmo builder are drawn on top.
+</Accordion>
+
+<Accordion title="Motion vectors (TAA support)">
+  Tracks per-object model matrices from the previous frame (`prowl_PrevObjectToWorld`) and the previous view-projection matrix to support temporal anti-aliasing and motion blur. The matrix cache is cleaned up every 120 frames.
+</Accordion>
+
+## Creating a Custom RenderPipeline
+
+Subclass `RenderPipeline`, override `Render`, and assign your pipeline to the active camera or engine context.
+
+```csharp
+using Prowl.Runtime;
+using Prowl.Runtime.Rendering;
+using Prowl.Runtime.Rendering.Pipelines;
+using Veldrid;
+
+public class WireframeRenderPipeline : RenderPipeline
+{
+    public override void Render(Camera camera, in RenderingData data)
+    {
+        CommandBuffer cmd = CommandBufferPool.Get("Wireframe Pass");
+
+        // Target the camera's render texture or screen
+        cmd.SetRenderTarget(Graphics.ScreenTarget);
+        cmd.ClearRenderTarget(true, true, Color.black);
+
+        // Iterate material batches
+        foreach (RenderBatch batch in EnumerateBatches())
+        {
+            cmd.SetMaterial(batch.material, 0);
+            cmd.SetWireframe(true);
+
+            foreach (int idx in batch.renderIndices)
+            {
+                IRenderable r = GetRenderable(idx);
+                r.GetRenderingData(out PropertyState props, out IGeometryDrawData geo, out Matrix4x4 model);
+
+                cmd.ApplyPropertyState(props);
+                cmd.SetMatrix("_Model", model.ToFloat());
+                cmd.DrawSingle(geo);
+            }
+        }
+
+        Graphics.SubmitCommandBuffer(cmd);
+        CommandBufferPool.Release(cmd);
+    }
+}
+```
+
+<Tip>
+Call `RenderPipeline.EnumerateBatches()` rather than `GetRenderables()` to automatically benefit from material-based batching and avoid redundant pipeline state switches.
+</Tip>
+
+<Warning>
+Always release `CommandBuffer` instances back to the pool with `CommandBufferPool.Release()` after submission, or they will leak GPU resources.
+</Warning>

@@ -1,0 +1,257 @@
+---
+title: 'Prowl Editor Layout and Navigation Guide'
+sidebarTitle: 'Editor Overview'
+description: 'Learn the Prowl editor layout: scene view, hierarchy, inspector, assets browser, console, game window, and docking system.'
+---
+
+The Prowl editor is a fully integrated development environment built on the engine's own immediate-mode UI library — the same library used for in-game UI. Every panel you see is a live `EditorWindow` instance rendered each frame, which means the editor itself serves as a practical showcase of what the UI system can do. This guide walks through every major window, explains how the docking system works, and covers the play controls, undo/redo system, and drag-and-drop workflows you will use every day.
+
+## Default Window Layout
+
+When you open a project for the first time, the editor constructs a default docked layout automatically. The layout is assembled in code — each window is docked relative to the previous one — and produces the following arrangement:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      Header Bar                         │
+│  File  Edit  Assets  Create  Windows   ▶  ⏸  ⏹        │
+├──────────┬──────────────────────────────┬───────────────┤
+│          │     Scene View / Game View   │               │
+│Hierarchy │     (tabbed center area)     │  Inspector    │
+│          ├──────────────────────────────┤               │
+│          │  Assets Browser / Console    │               │
+└──────────┴──────────────────────────────┴───────────────┘
+```
+
+Every window in this layout can be undocked, moved, resized, or closed. You can restore any closed window from the **Windows** menu in the header bar.
+
+## Header Bar
+
+The header bar runs across the top of the editor and is always visible when a project is open. It contains the main menu and the play controls.
+
+### Main Menu
+
+| Menu | Key Actions |
+|------|-------------|
+| **File** | New Scene, Save Scene (`Ctrl+S`), Save Scene As (`Ctrl+Shift+S`), Build Project |
+| **Edit** | Scene Settings, Project Settings, Editor Preferences |
+| **Assets** | Create Folder / Material / Script, Refresh Cache, Reimport All, Recompile |
+| **Create** | 3D primitives (Cube, Sphere, Cylinder, Capsule, Plane, Quad), Lights (Directional, Point, Spot) |
+| **Windows** | Open any editor window: Scene View, Game View, Hierarchy, Inspector, Assets Browser, Console, etc. |
+
+### Play Controls
+
+The center of the header bar shows the current `PlayMode` state and provides buttons to transition between modes:
+
+<CardGroup cols={3}>
+  <Card title="▶ Play" icon="play">
+    Starts play mode. The scene is stored, then restored to its pre-play state when you stop. The Game window receives focus automatically if **Auto Focus Game View** is enabled in General Preferences.
+  </Card>
+  <Card title="⏸ Pause" icon="pause">
+    Suspends game-time updates while keeping the scene rendered. Click Play again to resume. The button changes to Resume (▶) while paused.
+  </Card>
+  <Card title="⏹ Stop" icon="stop">
+    Exits play mode and restores the scene to exactly the state it was in before you pressed Play. Any in-play changes are discarded.
+  </Card>
+</CardGroup>
+
+<Warning>
+  Changes you make to the scene **while in play mode are not saved**. The scene is fully restored to its pre-play snapshot when you press Stop. This matches Unity's behavior — edit your scene only while in **Editing** mode.
+</Warning>
+
+## Scene View (`SceneViewWindow`)
+
+The Scene View is the primary 3D editing viewport. It renders the scene through a dedicated **Editor Camera** (a `Camera` component on a hidden `GameObject` with `HideFlags.HideAndDontSave`) directly into a `RenderTexture`, then draws that texture into the panel.
+
+### Camera Navigation
+
+| Action | Control |
+|--------|---------|
+| Look around | Right-click + drag |
+| Fly forward / back / left / right | Right-click held + **W / S / A / D** |
+| Fly up / down | Right-click held + **E / Q** |
+| Pan | Middle-click + drag |
+| Zoom | Scroll wheel |
+| Accelerate fly speed | Hold **Shift** while flying |
+| Focus selected object(s) | **F** |
+| Duplicate selected | **Ctrl+D** |
+
+Fly speed increases exponentially the longer you hold a movement key, then resets when you release, giving you fine-grained control for close-up work and fast traversal for large scenes.
+
+### Gizmos and Transform Tools
+
+When a `GameObject` is selected in the Hierarchy, a **Transform Gizmo** appears in the Scene View allowing you to translate, rotate, and scale the object interactively. The gizmo supports:
+
+- **Translate** — X, Y, Z axes and XY, XZ, YZ planes, plus screen-space view plane
+- **Rotate** — X, Y, Z axes and screen-space rotation
+- **Scale** — X, Y, Z axes and uniform scale
+
+Hold **Ctrl** while dragging a gizmo handle to snap to the increment configured in Scene View Preferences (`SnapDistance` for translation, `SnapAngle` for rotation).
+
+Toggle between **World** and **Local** orientation using the globe/cube button in the viewport settings overlay (top-left of the viewport).
+
+### Viewport Settings Overlay
+
+A small overlay in the top-left corner of the Scene View provides quick access to:
+
+- **Select Editor Camera** — selects the hidden editor camera `GameObject` in the inspector so you can inspect its properties.
+- **Grid Type** — switch between no grid, XZ, XY, or YZ plane grids.
+- **Gizmo Mode** — toggle World / Local transform orientation.
+- **Open Preferences** — opens the Scene View section of Editor Preferences directly.
+
+### Object Picking and Selection
+
+Left-clicking in the Scene View raycasts against the scene's gBuffer to determine which `GameObject` was clicked. If the object belongs to a prefab instance, a single click selects the prefab root; double-clicking selects the specific child object inside the prefab.
+
+### Drag & Drop into the Scene View
+
+You can drag assets from the **Assets Browser** directly onto the scene:
+
+| Asset Type | Result |
+|-----------|--------|
+| `GameObject` / Prefab | Instantiates at the surface hit point under the cursor, or 10 units in front of the camera if no surface is hit |
+| `Scene` | Loads the dropped scene |
+| `Material` | Assigns the material to the `MeshRenderer` of the object under the cursor |
+
+## Game Window (`GameWindow`)
+
+The Game Window renders the scene through the game's active `Camera` components, exactly as it will appear at runtime. It is the play-mode preview panel. Input events are routed through the Game Window's own `InputHandler` during play mode so that `Input` calls in your scripts respond to key presses only when the Game Window is focused.
+
+<Tip>
+  During play mode you can switch between the Scene View and the Game Window without stopping the game. This lets you inspect gizmos and move the editor camera while your game logic runs.
+</Tip>
+
+## Hierarchy Window (`HierarchyWindow`)
+
+The Hierarchy Window displays the scene graph as a collapsible tree. Every `GameObject` in the active scene appears here, organized by parent-child relationships. Hidden objects (those with `HideFlags.Hide` or `HideFlags.HideAndDontSave`) are not shown.
+
+### Selecting GameObjects
+
+Click a row to select a `GameObject`. Hold **Shift** or **Ctrl** for multi-selection. The selected objects are highlighted in both the Hierarchy and the Scene View (where their bounds are drawn as yellow wireframes).
+
+### Creating GameObjects
+
+Click the **+** (circle-plus) button at the top-right of the search bar to open the **Create GameObject** popup, or right-click anywhere in the hierarchy panel. Options include:
+
+- **New GameObject** — an empty `GameObject` at the world origin
+- Everything under the **Create** sub-menu (primitives, lights, etc.)
+
+### Context Menu (Right-Click on a GameObject)
+
+| Action | Description |
+|--------|-------------|
+| Rename | Enter inline rename mode (also triggered by double-clicking) |
+| Duplicate | Clones the selected object(s) |
+| Delete | Removes the object(s) from the scene (undoable) |
+| Align With View | Moves the object to match the editor camera's position and rotation |
+| Align View With | Moves the editor camera to the object's position and rotation |
+| Break Prefab Connection | Detaches the object from its prefab asset |
+
+### Reparenting via Drag & Drop
+
+Drag a `GameObject` row onto another row to reparent it. Drop it onto the empty space below the list to move it back to the scene root. Dropping a prefab asset from the Assets Browser into the Hierarchy instantiates it as a child of the drop target.
+
+### Search
+
+Use the search bar at the top of the Hierarchy to filter the visible entries by name. The filter is case-insensitive.
+
+## Inspector Window (`InspectorWindow`)
+
+The Inspector shows the properties of the currently selected object. When a `GameObject` is selected it lists all attached components; each component is rendered by its registered **property drawer**. Built-in drawers handle all primitive types, vectors, quaternions, colors, asset references, enums, and arrays. Custom drawers can be registered for any type by creating a class in an Editor script.
+
+Asset files selected in the Assets Browser are also shown in the Inspector, where you can view and edit their importer settings (e.g., texture compression, normal-map flag).
+
+## Assets Browser (`AssetsBrowserWindow`)
+
+The Assets Browser shows the contents of the currently selected folder inside your `Assets/` directory and lets you navigate the project's asset tree.
+
+### Navigation
+
+The Assets Tree (a companion panel called `AssetsTreeWindow`) on the left shows the folder hierarchy. Clicking a folder in the tree updates the Assets Browser to show that folder's contents. You can also use the search bar inside the Browser to find files by name across the entire current folder (including sub-folders).
+
+### Creating Assets
+
+Right-click inside the Assets Browser (or use the **Assets** menu bar) to create new assets:
+
+| Action | Result |
+|--------|--------|
+| **Create → Folder** | New directory, immediately enters rename mode |
+| **Create → Material** | New `.mat` file with default PBR material settings |
+| **Create → Script** | New `.cs` file from the built-in script template |
+
+### Drag & Drop from the Browser
+
+Drag any asset from the Browser to:
+
+- The **Scene View** to instantiate it or assign a material
+- The **Hierarchy** to instantiate prefabs
+- An **Inspector** field to assign an asset reference (e.g., drag a `Texture2D` onto a material's albedo slot)
+
+### Asset Operations
+
+| Action | How |
+|--------|-----|
+| Rename | Double-click a file or folder name |
+| Delete | Select and press **Delete** |
+| Reimport | Right-click → Reimport, or use **Assets → Reimport All** from the menu bar |
+| Refresh cache | **Assets → Refresh Cache** |
+
+## Console Window (`ConsoleWindow`)
+
+The Console Window displays all output from `Debug.Log`, `Debug.LogWarning`, `Debug.LogError`, and unhandled exceptions. Messages are color-coded — standard log messages appear in white, warnings in yellow, errors and exceptions in red. The console is populated during both edit mode and play mode.
+
+## Build Window (`BuildWindow`)
+
+Open the Build Window via **File → Build Project**. It lets you configure and trigger a standalone build of your game. The build system:
+
+1. Traverses all scenes included in the build
+2. Collects only the assets referenced by those scenes (dependency tracking)
+3. Packs them into a compact asset archive
+4. Produces a self-contained executable for the target platform
+
+## Docking System
+
+The editor uses a hierarchical binary-split docking system (`DockContainer`, `DockNode`). Windows are attached to dock nodes at a specified zone (Left, Right, Top, Bottom, or Center) with a configurable split ratio.
+
+### Resizing Panels
+
+Hover the mouse over the border between two docked panels. A yellow highlight appears on the splitter. Click and drag to resize both sides simultaneously. The minimum panel size is 100 px in each direction.
+
+### Undocking a Window
+
+Drag a window's title tab away from its current dock position. The window becomes a free-floating panel that you can position anywhere on screen.
+
+### Re-docking a Window
+
+Drag a floating window over a docked panel. Drop zones appear at the edges and center of the target panel. Release the mouse over a zone to dock the window there.
+
+### Restoring Closed Windows
+
+Any window can be reopened from **Windows** in the menu bar. The available windows are:
+
+<CardGroup cols={3}>
+  <Card title="Scene View" icon="camera">Windows → Scene View</Card>
+  <Card title="Game View" icon="gamepad">Windows → Game View</Card>
+  <Card title="Hierarchy" icon="folder-tree">Windows → Hierarchy</Card>
+  <Card title="Inspector" icon="circle-info">Windows → Inspector</Card>
+  <Card title="Assets Browser" icon="images">Windows → Assets Browser</Card>
+  <Card title="Console" icon="terminal">Windows → Console</Card>
+</CardGroup>
+
+## Undo & Redo
+
+Prowl has a full undo/redo stack (`UndoRedoManager`) that covers:
+
+- Transform changes (move, rotate, scale via gizmos)
+- Adding and deleting `GameObject`s
+- Reparenting (drag & drop in the Hierarchy)
+- Renaming `GameObject`s
+- Prefab operations (break link, clone)
+
+| Action | Shortcut |
+|--------|----------|
+| Undo | **Ctrl+Z** |
+| Redo | **Ctrl+Y** |
+
+<Note>
+  Undo/redo history is currently cleared when scripts are recompiled and the editor restarts. Saving your scene frequently (`Ctrl+S`) is strongly recommended during active development.
+</Note>

@@ -1,0 +1,280 @@
+---
+title: 'Graphics API — Draw, Blit, and GPU Control'
+sidebarTitle: 'Graphics'
+description: 'Reference for Prowl's static Graphics class: access the Veldrid device, draw meshes, blit textures, submit command buffers, and manage GPU resources.'
+---
+
+The `Graphics` class is the central hub for all low-level GPU operations in Prowl. It wraps a [Veldrid](https://github.com/veldrid/veldrid) `GraphicsDevice`, exposes the active rendering backend, and provides high-level helpers for drawing meshes, blitting textures, submitting recorded command buffers, and managing GPU resource lifetimes. Every operation that touches the GPU — from a simple texture blit to a full scene draw — flows through or is coordinated by this static class.
+
+<Note>
+`Graphics` is a static partial class defined in `Prowl.Runtime`. It is initialised once at engine startup via `Graphics.Initialize()` and must not be used before that call.
+</Note>
+
+## Core Device Properties
+
+<ResponseField name="Device" type="GraphicsDevice">
+  The active Veldrid `GraphicsDevice`. Provides direct access to the underlying GPU abstraction layer. Use this for low-level Veldrid calls not covered by the higher-level helpers.
+</ResponseField>
+
+<ResponseField name="Factory" type="ResourceFactory">
+  Shorthand for `Device.ResourceFactory`. Use it to create Veldrid resources such as `Pipeline`, `ResourceLayout`, `DeviceBuffer`, and `Framebuffer`.
+</ResponseField>
+
+<ResponseField name="ScreenTarget" type="Framebuffer">
+  Returns `Device.SwapchainFramebuffer` — the main window's backbuffer. Render to this framebuffer to have output appear on screen.
+</ResponseField>
+
+<ResponseField name="TargetResolution" type="Vector2Int">
+  The current resolution of the swapchain framebuffer as a `Vector2Int(width, height)`.
+</ResponseField>
+
+<ResponseField name="VSync" type="bool">
+  Gets or sets vertical synchronisation on the swapchain. Maps directly to `Device.SyncToVerticalBlank`.
+</ResponseField>
+
+## Backend Detection
+
+Prowl can run on multiple graphics backends. Use these flags to write backend-specific code.
+
+<ResponseField name="IsDX11" type="bool">
+  `true` when the active backend is Direct3D 11.
+</ResponseField>
+
+<ResponseField name="IsOpenGL" type="bool">
+  `true` when the active backend is OpenGL or OpenGL ES.
+</ResponseField>
+
+<ResponseField name="IsVulkan" type="bool">
+  `true` when the active backend is Vulkan.
+</ResponseField>
+
+```csharp
+// Example: choose a different shader path per backend
+if (Graphics.IsVulkan)
+    Debug.Log("Running on Vulkan");
+else if (Graphics.IsOpenGL)
+    Debug.Log("Running on OpenGL");
+```
+
+## Initialization
+
+### Initialize
+
+```csharp
+public static void Initialize(bool VSync = true, GraphicsBackend preferredBackend = GraphicsBackend.OpenGL)
+```
+
+Creates the Veldrid `GraphicsDevice` using the window provided by `Screen.InternalWindow`. Must be called once at engine startup before any rendering work.
+
+<ParamField path="VSync" type="bool" default="true">
+  Whether to enable vertical synchronisation on the swapchain.
+</ParamField>
+<ParamField path="preferredBackend" type="GraphicsBackend" default="GraphicsBackend.OpenGL">
+  The preferred Veldrid backend. Prowl will attempt to create a device with this backend, falling back automatically if unavailable.
+</ParamField>
+
+## Drawing
+
+### DrawMesh
+
+```csharp
+public static void DrawMesh(
+    AssetRef<Mesh> mesh,
+    AssetRef<Material> material,
+    Matrix4x4 matrix,
+    byte layerIndex,
+    PropertyState? propertyBlock = null)
+```
+
+Submits a mesh for rendering in the current frame. Meshes are not drawn immediately; they are accumulated into the active `RenderPipeline`'s renderable list and batched by material for efficient GPU submission.
+
+<ParamField path="mesh" type="AssetRef<Mesh>">
+  Reference to the mesh asset to render.
+</ParamField>
+<ParamField path="material" type="AssetRef<Material>">
+  Material (shader + properties) used to shade the mesh.
+</ParamField>
+<ParamField path="matrix" type="Matrix4x4">
+  World-space transform matrix for the mesh.
+</ParamField>
+<ParamField path="layerIndex" type="byte">
+  Render layer index used for culling and layer-based render pass filtering.
+</ParamField>
+<ParamField path="propertyBlock" type="PropertyState?" default="null">
+  Optional per-object shader property overrides. When provided, these values override the material's own properties for this draw call only.
+</ParamField>
+
+```csharp
+// Draw a mesh at a specific world position
+Graphics.DrawMesh(myMesh, myMaterial, Matrix4x4.CreateTranslation(new Vector3(0, 1, 0)), 0);
+```
+
+### Blit
+
+```csharp
+public static void Blit(Texture2D source, Framebuffer dest, Material mat = null, int pass = 0)
+```
+
+Copies (blits) a `Texture2D` to a `Framebuffer`, optionally through a full-screen material pass. Internally this acquires a `CommandBuffer` from the pool, records the blit, submits it, and releases the buffer — it is a fully self-contained, immediate operation.
+
+<ParamField path="source" type="Texture2D">
+  The source texture to blit from.
+</ParamField>
+<ParamField path="dest" type="Framebuffer">
+  The destination framebuffer to blit into.
+</ParamField>
+<ParamField path="mat" type="Material" default="null">
+  Optional material to apply during blit. When `null`, the internal default blit shader is used.
+</ParamField>
+<ParamField path="pass" type="int" default="0">
+  Shader pass index to use from the material.
+</ParamField>
+
+```csharp
+// Blit a render texture colour buffer to the screen
+Graphics.Blit(renderTexture.ColorBuffers[0], Graphics.ScreenTarget);
+
+// Blit through a post-processing material
+Graphics.Blit(sourceTexture, Graphics.ScreenTarget, postProcessMaterial, 0);
+```
+
+## Command Submission
+
+### SubmitCommandBuffer
+
+```csharp
+public static void SubmitCommandBuffer(CommandBuffer commandBuffer, GraphicsFence? fence = null)
+```
+
+Ends recording on `commandBuffer` and submits its underlying Veldrid `CommandList` to the GPU. After submission the buffer is cleared and ready for reuse.
+
+<ParamField path="commandBuffer" type="CommandBuffer">
+  The command buffer to submit. Must have been in an active recording state.
+</ParamField>
+<ParamField path="fence" type="GraphicsFence?" default="null">
+  Optional fence to signal when the GPU finishes executing the submitted commands. Use `WaitForFence` to synchronise.
+</ParamField>
+
+### SubmitCommandList
+
+```csharp
+public static void SubmitCommandList(CommandList list, GraphicsFence? fence = null)
+```
+
+Ends and submits a raw Veldrid `CommandList`. Prefer `SubmitCommandBuffer` for higher-level usage.
+
+### GetCommandList
+
+```csharp
+public static CommandList GetCommandList()
+```
+
+Creates a new Veldrid `CommandList`, calls `Begin()` on it, and returns it. Caller is responsible for ending and disposing the list.
+
+<ResponseField name="returns" type="CommandList">
+  A new, already-begun Veldrid `CommandList`.
+</ResponseField>
+
+## Synchronisation
+
+### WaitForFence
+
+```csharp
+public static void WaitForFence(GraphicsFence fence, ulong timeout = ulong.MaxValue)
+```
+
+Blocks the CPU until the GPU signals `fence`, or until `timeout` nanoseconds elapses.
+
+### WaitForFences
+
+```csharp
+public static void WaitForFences(GraphicsFence[] fences, bool waitAll, ulong timeout = ulong.MaxValue)
+```
+
+Waits for multiple fences. When `waitAll` is `true`, blocks until all fences are signalled; when `false`, returns as soon as any fence is signalled.
+
+## Frame Management
+
+### EndFrame
+
+```csharp
+public static void EndFrame()
+```
+
+Called once per frame after all rendering is complete. Performs the following operations in order:
+
+1. Ticks the `RenderTexture` pool (ages and destroys unused render textures)
+2. Clears the active `RenderPipeline`'s renderable and light lists
+3. Resizes the swapchain if the window dimensions have changed
+4. Waits for the GPU to be idle
+5. Disposes all resources queued for deferred disposal
+6. Calls `Device.SwapBuffers()` to present the frame
+
+<Warning>
+Do not call `EndFrame` more than once per frame. It must be paired with a complete rendering pass.
+</Warning>
+
+## Projection Utilities
+
+### GetGPUProjectionMatrix
+
+```csharp
+public static Matrix4x4 GetGPUProjectionMatrix(Matrix4x4 projection)
+```
+
+Adjusts a CPU-side projection matrix for the active graphics backend. On Direct3D 11, the Y axis of the projection is flipped (`M22 = -M22`) to account for Veldrid's clip-space conventions. On OpenGL and Vulkan the matrix is returned unchanged.
+
+<ParamField path="projection" type="Matrix4x4">
+  The CPU projection matrix (e.g., the output of `Matrix4x4.CreatePerspectiveFieldOfView`).
+</ParamField>
+
+<ResponseField name="returns" type="Matrix4x4">
+  The backend-adjusted projection matrix ready for upload to the GPU.
+</ResponseField>
+
+```csharp
+// Always call this before uploading a projection matrix to a shader
+Matrix4x4 gpuProj = Graphics.GetGPUProjectionMatrix(camera.ProjectionMatrix);
+commandBuffer.SetMatrix("_Projection", gpuProj.ToFloat());
+```
+
+### GetFrontFace
+
+```csharp
+public static FrontFace GetFrontFace()
+```
+
+Returns `FrontFace.Clockwise` on OpenGL and `FrontFace.CounterClockwise` on all other backends, reflecting winding order differences between APIs.
+
+## Full Usage Example
+
+<CodeGroup>
+```csharp Basic Draw
+// Queue a mesh for rendering this frame
+Graphics.DrawMesh(
+    mesh: myMeshRef,
+    material: myMaterialRef,
+    matrix: Matrix4x4.TRS(transform.position, transform.rotation, transform.localScale),
+    layerIndex: 0
+);
+```
+
+```csharp Command Buffer Pipeline
+// Manual command buffer submission
+CommandBuffer cmd = CommandBufferPool.Get("My Pass");
+cmd.SetRenderTarget(myRenderTexture);
+cmd.ClearRenderTarget(true, true, Color.black);
+cmd.SetMaterial(myMaterial);
+cmd.DrawSingle(myMesh);
+Graphics.SubmitCommandBuffer(cmd);
+CommandBufferPool.Release(cmd);
+```
+
+```csharp Backend-Specific Code
+if (Graphics.IsVulkan)
+{
+    // Vulkan-specific resource creation
+}
+Matrix4x4 proj = Graphics.GetGPUProjectionMatrix(rawProjection);
+```
+</CodeGroup>

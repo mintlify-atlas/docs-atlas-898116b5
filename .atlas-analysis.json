@@ -1,0 +1,186 @@
+{
+  "projectType": "framework",
+  "projectName": "Prowl Engine",
+  "projectDescription": "An open-source, Unity-inspired 3D game engine written in C# for .NET 9, featuring a complete editor, multi-backend rendering (OpenGL, Vulkan, DirectX, Metal), PBR graphics, physics, audio, and navigation.",
+  "theme": "aspen",
+  "primaryColor": "#5c64f4",
+  "lightColor": "#acb4fc",
+  "darkColor": "#ffffff",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Getting Started",
+        "groups": [
+          {
+            "group": "Introduction",
+            "pages": [
+              "introduction",
+              "getting-started/installation",
+              "getting-started/project-setup",
+              "getting-started/editor-overview"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/gameobjects-components",
+              "concepts/scene-management",
+              "concepts/asset-system",
+              "concepts/scripting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Scripting",
+            "pages": [
+              "guides/monobehaviour-lifecycle",
+              "guides/coroutines",
+              "guides/input",
+              "guides/time"
+            ]
+          },
+          {
+            "group": "Rendering",
+            "pages": [
+              "guides/camera-rendering",
+              "guides/materials-shaders",
+              "guides/lighting",
+              "guides/post-processing"
+            ]
+          },
+          {
+            "group": "Physics & Navigation",
+            "pages": [
+              "guides/physics",
+              "guides/colliders",
+              "guides/navmesh"
+            ]
+          },
+          {
+            "group": "Audio & UI",
+            "pages": [
+              "guides/audio",
+              "guides/gui-system"
+            ]
+          },
+          {
+            "group": "Build & Deploy",
+            "pages": [
+              "guides/building-your-game",
+              "guides/asset-importers"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Runtime Core",
+            "pages": [
+              "api/application",
+              "api/scene-manager",
+              "api/engine-object",
+              "api/gameobject",
+              "api/monobehaviour"
+            ]
+          },
+          {
+            "group": "Rendering API",
+            "pages": [
+              "api/graphics",
+              "api/render-pipeline",
+              "api/command-buffer",
+              "api/textures"
+            ]
+          },
+          {
+            "group": "Systems",
+            "pages": [
+              "api/physics",
+              "api/input",
+              "api/time",
+              "api/debug",
+              "api/audio-system"
+            ]
+          },
+          {
+            "group": "Math Library",
+            "pages": [
+              "api/math"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Unity-inspired GameObject/Component entity system with MonoBehaviour scripting lifecycle",
+    "Multi-backend GPU rendering via Veldrid (OpenGL, Vulkan, DirectX 11, Metal)",
+    "PBR (Physically Based Rendering) with HDR, shadows, and post-processing effects",
+    "Complete editor with docking windows, asset browser, inspector, scene view, and hierarchy",
+    "Double-precision physics via Jitter2 with raycasting and layer collision matrices",
+    "Asset pipeline with custom importers, GUID references, meta files, and dependency tracking",
+    "Immediate-mode GUI system for both runtime and editor use",
+    "Navigation mesh support via DotRecast (Recast & Detour)",
+    "Coroutine system and ScriptableObjects matching Unity's API patterns",
+    "Cross-platform: Windows, Linux, and macOS",
+    "Hot-reload assembly system and undo/redo in the editor",
+    "Node graph system for visual scripting foundations",
+    "64-bit large world coordinates with camera-relative rendering",
+    "OpenAL audio with 3D positional support"
+  ],
+  "publicApiSurface": [
+    "Application.Run(title, width, height, assetProvider, isEditor)",
+    "Application.Quit()",
+    "EngineObject.DestroyImmediate() / DestroyLater()",
+    "EngineObject.Clone() / CopyTo(target)",
+    "EngineObject.FindObjectsOfType<T>()",
+    "GameObject.AddComponent<T>()",
+    "GameObject.GetComponent<T>() / TryGetComponent<T>()",
+    "GameObject.GetComponentInParent<T>() / GetComponentInChildren<T>()",
+    "GameObject.Instantiate(original) / Instantiate(prefab)",
+    "GameObject.SetParent(parent, worldStays)",
+    "MonoBehaviour.Awake() / Start() / Update() / LateUpdate() / FixedUpdate()",
+    "MonoBehaviour.OnDestroy() / OnEnable() / OnDisable()",
+    "MonoBehaviour.StartCoroutine(string) / StopCoroutine(string)",
+    "MonoBehaviour.OnGUI(Gui gui)",
+    "MonoBehaviour.OnRenderImage(src, dest)",
+    "SceneManager.LoadScene(scene)",
+    "SceneManager.InstantiateNewScene()",
+    "SceneManager.StoreScene() / RestoreScene()",
+    "SceneManager.Clear()",
+    "Graphics.DrawMesh(mesh, material, matrix, layer)",
+    "Graphics.Blit(source, dest, mat, pass)",
+    "Graphics.SubmitCommandBuffer(buffer)",
+    "Physics.Raycast(origin, dir) / Raycast(origin, dir, out RaycastHit)",
+    "Physics.SetLayerCollision(layer1, layer2, bool)",
+    "Input.GetKey(Key) / GetKeyDown(Key) / GetKeyUp(Key)",
+    "Input.GetMouseButton(MouseButton) / MousePosition / MouseDelta",
+    "Input.PushHandler(IInputHandler) / PopHandler()",
+    "Time.deltaTime / Time.fixedDeltaTime / Time.timeScale",
+    "Debug.Log() / Debug.LogWarning() / Debug.LogError()",
+    "WaitForSeconds / WaitForEndOfFrame / WaitForFixedUpdate (YieldInstruction)",
+    "AssetRef<T> (typed asset reference)",
+    "IAssetProvider (asset loading interface)",
+    "RenderPipeline.Render(Camera, RenderingData)",
+    "CommandBuffer / CommandBufferPool",
+    "PropertyState / KeywordState (shader properties)",
+    "Mesh / Material / Shader / Texture2D / RenderTexture / AnimationClip / AudioClip / Prefab / ScriptableObject",
+    "Transform (local/world position, rotation, scale)",
+    "Vector2 / Vector3 / Vector4 / Quaternion / Matrix4x4 / Bounds / Ray / Rect",
+    "Mathf / MathD (static math utilities)",
+    "ObjectPool<T>",
+    "NodeGraph / Node / NodePort (visual scripting base)",
+    "ScriptableSingleton<T>",
+    "[AddComponentMenu] / [ExecuteAlways] / [ExecutionOrder] / [RequireComponent] attributes",
+    "[OnAssemblyLoad] / [OnSceneLoad] / [OnPlaymodeChanged] lifecycle hook attributes",
+    "AssetDatabase (editor: import, refresh, create, move, delete assets)",
+    "ScriptedImporter (custom asset import pipeline)",
+    "UndoRedoManager (editor undo/redo)"
+  ]
+}

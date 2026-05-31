@@ -1,0 +1,248 @@
+---
+title: 'Custom Asset Importers in the Prowl Pipeline'
+sidebarTitle: 'Asset Importers'
+description: 'Create custom asset importers for new file types in Prowl by extending ScriptedImporter, registering with ImporterAttribute, and returning serialized assets.'
+---
+
+Every file in your Prowl project's `Assets/` folder is processed by an **importer** before it becomes a usable runtime object. Importers read the raw file bytes, convert them into one or more `EngineObject` instances, and store the result as a `.prowl` binary package in the library cache. When you drag a `.png` into the editor it is immediately processed by `TextureImporter`; a `.fbx` goes through `ModelImporter`; a `.cs` script triggers `MonoScriptImporter` and a script reload. You can extend this pipeline for any file type by subclassing `ScriptedImporter` and decorating your class with `[Importer]`.
+
+## Built-in Importers
+
+<CardGroup cols={2}>
+  <Card title="AudioClipImporter" icon="music">
+    Handles `.wav`, `.wave`, `.ogg`. Decodes PCM or Vorbis audio into an `AudioClip` asset with sample rate, channel count, and bit-depth metadata.
+  </Card>
+  <Card title="TextureImporter" icon="image">
+    Handles `.png`, `.jpg`, `.bmp`, `.tga`, `.dds`, `.webp`, `.tif`, `.gif`. Uploads to a `Texture2D` with configurable mip-map generation, wrap mode, and filter types.
+  </Card>
+  <Card title="ModelImporter" icon="cube">
+    Handles `.obj`, `.fbx`, `.gltf`, `.dae`, `.blend`, `.ply`, `.stl`, `.pmx` via AssimpNet. Produces a `GameObject` hierarchy as the main asset, with `Mesh`, `Material`, and `AnimationClip` sub-assets.
+  </Card>
+  <Card title="ShaderImporter" icon="code">
+    Handles `.shader` files. Parses Prowl's shader format, cross-compiles GLSL to SPIR-V via Glslang.NET, then cross-compiles to the target backend (HLSL/MSL/GLSL) via SPIRV-Cross. Falls back to `InternalErrorShader` on parse failure.
+  </Card>
+  <Card title="FontImporter" icon="font">
+    Handles `.ttf` / `.otf`. Rasterizes a glyph atlas at the configured point size and produces a `Font` asset.
+  </Card>
+  <Card title="MaterialImporter" icon="paintbrush">
+    Handles `.mat` files (Prowl's Echo-serialized material format). Deserializes into a `Material` asset.
+  </Card>
+  <Card title="MeshImporter" icon="shapes">
+    Handles `.mesh` files (Prowl binary mesh format). Deserializes into a `Mesh` asset directly.
+  </Card>
+  <Card title="PrefabImporter" icon="layer-group">
+    Handles `.prefab` files. Deserializes an Echo-encoded `GameObject` hierarchy into a prefab asset.
+  </Card>
+  <Card title="SceneImporter" icon="globe">
+    Handles `.scene` files. Deserializes an Echo-encoded `Scene` asset.
+  </Card>
+  <Card title="TextAssetImporter" icon="file-lines">
+    Handles `.txt` and `.md`. Wraps the file contents in a `TextAsset` object for runtime access.
+  </Card>
+  <Card title="MonoScriptImporter" icon="file-code">
+    Handles `.cs` source files. Produces a `MonoScript` marker asset and triggers a project recompile.
+  </Card>
+  <Card title="ComputeShaderImporter" icon="microchip">
+    Handles `.compute` files. Parses and cross-compiles compute shaders through the same Glslang/SPIRV-Cross pipeline as the regular shader importer.
+  </Card>
+  <Card title="ScriptableObjectImporter" icon="database">
+    Handles `.scriptobj` files (Echo text format). Deserializes into a `ScriptableObject` subclass.
+  </Card>
+</CardGroup>
+
+## ScriptedImporter Base Class
+
+All importers inherit from `ScriptedImporter` and override a single method:
+
+```csharp
+public class ScriptedImporter
+{
+    public virtual void Import(SerializedAsset ctx, FileInfo assetPath) { }
+}
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `ctx` | `SerializedAsset` | Output container — call `SetMainObject` and `AddSubObject` on this |
+| `assetPath` | `FileInfo` | Full path to the source file on disk |
+
+### SerializedAsset Output Container
+
+`SerializedAsset` holds the imported objects that Prowl will cache to the library:
+
+```csharp
+public class SerializedAsset
+{
+    public EngineObject? Main;           // the primary asset
+    public List<EngineObject> SubAssets; // secondary assets embedded in the same file
+
+    // Set the main (primary) asset — call this exactly once
+    public void SetMainObject(EngineObject obj);
+
+    // Add a secondary asset — returns an AssetRef to it
+    public AssetRef<T> AddSubObject<T>(T obj) where T : EngineObject;
+
+    // Retrieve any asset by FileID (0 = Main, 1..N = SubAssets)
+    public EngineObject GetAsset(ushort fileID);
+}
+```
+
+Every importer **must** call `ctx.SetMainObject(...)` exactly once. If the file format produces multiple objects (e.g., a `.fbx` with many meshes and materials), add the extras with `ctx.AddSubObject<T>(obj)`.
+
+## Registering an Importer with `[Importer]`
+
+Decorate your class with `[Importer]` to tell Prowl which file extensions it handles. The attribute takes a file icon name, the general runtime type, and one or more file extensions (with or without a leading dot):
+
+```csharp
+[AttributeUsage(AttributeTargets.Class)]
+public class ImporterAttribute : Attribute
+{
+    public ImporterAttribute(string fileIcon, Type generalType, params string[] extensions) { ... }
+}
+```
+
+Prowl scans all loaded assemblies for `[Importer]`-decorated types on startup (via `[OnAssemblyLoad]`) and builds an extension-to-importer lookup table. If two importers register the same extension, the second one wins and a warning is logged.
+
+```csharp
+// Example: register for .csv files, producing a TextAsset
+[Importer("FileIcon.png", typeof(TextAsset), ".csv")]
+public class CsvImporter : ScriptedImporter
+{
+    public override void Import(SerializedAsset ctx, FileInfo assetPath)
+    {
+        TextAsset asset = new TextAsset();
+        asset.Text = File.ReadAllText(assetPath.FullName);
+        ctx.SetMainObject(asset);
+    }
+}
+```
+
+## Writing a Custom Importer
+
+The walkthrough below builds a `.csv` importer that wraps the file in a `TextAsset` and emits one sub-asset `TextAsset` per column header as a demonstration of sub-assets.
+
+<Steps>
+  <Step title="Create the importer class">
+    Place it anywhere in your project's `Assets/` folder (inside an `Editor/` subfolder is conventional so it is excluded from game builds).
+
+    ```csharp
+    using Prowl.Editor.Assets;
+    using Prowl.Runtime;
+
+    [Importer("FileIcon.png", typeof(TextAsset), ".csv")]
+    public class CsvImporter : ScriptedImporter
+    {
+        public bool includeHeaders = true;
+
+        public override void Import(SerializedAsset ctx, FileInfo assetPath)
+        {
+            string raw = File.ReadAllText(assetPath.FullName);
+
+            // Main asset: the raw CSV text
+            TextAsset mainAsset = new TextAsset();
+            mainAsset.Text = raw;
+            ctx.SetMainObject(mainAsset);
+
+            // Sub-assets: one TextAsset per column header
+            if (includeHeaders)
+            {
+                string firstLine = raw.Split('\n')[0];
+                foreach (string header in firstLine.Split(','))
+                {
+                    TextAsset colAsset = new TextAsset();
+                    colAsset.Text = header.Trim();
+                    ctx.AddSubObject(colAsset);
+                }
+            }
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Save and let Prowl reimport">
+    As soon as the `.cs` file is saved, `MonoScriptImporter` triggers a recompile. After the recompile, any `.csv` file already in your `Assets/` folder is automatically reimported through your new `CsvImporter`.
+  </Step>
+
+  <Step title="Load the asset at runtime">
+    ```csharp
+    public AssetRef<TextAsset> CsvFile;
+
+    public override void Awake()
+    {
+        if (CsvFile.IsAvailable)
+        {
+            TextAsset csv = CsvFile.Res!;
+            Debug.Log(csv.Text);
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Importer Properties and the Inspector
+
+Any `public` fields on your `ScriptedImporter` subclass are serialized into the asset's `.meta` file and displayed in the Inspector when the asset is selected. Changing a property and clicking **Save & Reimport** re-runs `Import` with the new settings.
+
+```csharp
+[Importer("FileIcon.png", typeof(TextAsset), ".csv")]
+public class CsvImporter : ScriptedImporter
+{
+    public bool includeHeaders = true;   // shown in Inspector
+    public char delimiter = ',';         // shown in Inspector
+
+    public override void Import(SerializedAsset ctx, FileInfo assetPath) { ... }
+}
+```
+
+## Shader Compiler Pipeline
+
+The shader import path is the most complex in the engine. At a high level:
+
+1. **Parse** — `ShaderParser` reads Prowl's custom `.shader` text format, resolving `#include` directives via `FileIncluder`.
+2. **Compile to SPIR-V** — each shader stage (vertex, fragment, compute) is compiled from GLSL to SPIR-V using **Glslang.NET**.
+3. **Cross-compile** — SPIR-V is fed into **SPIRV-Cross** to produce backend-specific source: HLSL (Direct3D 11/12), MSL (Metal), or GLSL (OpenGL/Vulkan). Veldrid selects the appropriate variant at runtime based on the active graphics backend.
+4. **Fallback** — if parsing or compilation fails, the importer substitutes `InternalErrorShader` and logs an error, so a broken shader never crashes the editor.
+
+```csharp
+// ShaderImporter.Import (simplified)
+[Importer("ShaderIcon.png", typeof(Shader), ".shader")]
+public class ShaderImporter : ScriptedImporter
+{
+    public override void Import(SerializedAsset ctx, FileInfo assetPath)
+    {
+        string source = File.ReadAllText(assetPath.FullName);
+        FileIncluder includer = new FileIncluder(relPath, searchDirs);
+
+        if (!ShaderParser.ParseShader(source, includer, out Shader? shader))
+            shader = s_internalError; // fallback
+
+        ctx.SetMainObject(shader!);
+    }
+}
+```
+
+<Tip>
+If you need to include common GLSL utility functions across multiple shaders, put them in a `.glsl` file and use `#include "path/to/utils.glsl"` in your `.shader` file. `FileIncluder` searches the project's `Assets/`, `Defaults/`, and `Packages/` directories.
+</Tip>
+
+## Querying the Importer Registry
+
+You can inspect the importer registry at runtime or in editor code:
+
+```csharp
+// Does a handler exist for this extension?
+bool supported = ImporterAttribute.SupportsExtension(".csv");
+
+// Get the importer Type for an extension
+Type? importerType = ImporterAttribute.GetImporter(".csv");
+
+// Get the primary runtime type produced by an extension
+Type? assetType = ImporterAttribute.GetGeneralType(".csv");
+
+// Get the icon name used in the Project window
+string icon = ImporterAttribute.GetIconForExtension(".csv");
+```
+
+<Warning>
+Extension strings must start with a dot (`.csv`, not `csv`). Importers with more than one dot in the extension string (e.g., `.tar.gz`) will throw an exception during registration — use single-extension strings only.
+</Warning>

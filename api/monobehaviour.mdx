@@ -1,0 +1,603 @@
+---
+title: 'MonoBehaviour API — Script Base Class Reference'
+sidebarTitle: 'MonoBehaviour'
+description: 'Full reference for Prowl's MonoBehaviour: all lifecycle methods, coroutine API, component accessors, and callback signatures.'
+---
+
+`MonoBehaviour` is the abstract base class for every script you attach to a `GameObject` in Prowl. You never instantiate it directly — instead you derive a class from it, add it to a `GameObject` via `AddComponent<T>()`, and override whichever lifecycle methods your script needs. The engine calls those methods at well-defined points in the frame: `Awake` once at creation, `Start` before the first active frame, `Update` every frame, `FixedUpdate` on physics ticks, and `LateUpdate` after all `Update` calls. `MonoBehaviour` also inherits the full identity, destruction, and cloning API from `EngineObject`, and mirrors the entire component query API of `GameObject` for convenience.
+
+<Note>
+`MonoBehaviour` carries `[CloneBehavior(CloneBehavior.ChildObject)]`, which means copies of a `GameObject` deep-copy its components rather than sharing references. To preserve a component's stable GUID across copies the `Identifier` field is marked `[CloneField(CloneFieldFlags.IdentityRelevant)]`.
+</Note>
+
+---
+
+## Core Properties
+
+<ResponseField name="GameObject" type="GameObject">
+  The `GameObject` this component is attached to. Set automatically when the component is added via `AddComponent`.
+
+  ```csharp
+  public GameObject GameObject { get; }
+  ```
+</ResponseField>
+
+<ResponseField name="Transform" type="Transform">
+  Shortcut to `GameObject.Transform`. Equivalent to calling `GameObject.Transform`.
+
+  ```csharp
+  public Transform Transform { get; }
+  ```
+</ResponseField>
+
+<ResponseField name="Enabled" type="bool">
+  Whether this component is individually enabled. Setting `false` triggers `OnDisable`; setting `true` triggers `OnEnable`. Does **not** affect sibling components.
+
+  ```csharp
+  public bool Enabled { get; set; }
+  ```
+</ResponseField>
+
+<ResponseField name="EnabledInHierarchy" type="bool">
+  `true` only when this component is enabled **and** its `GameObject` is enabled in the hierarchy. Read-only; updated automatically.
+
+  ```csharp
+  public bool EnabledInHierarchy { get; }
+  ```
+</ResponseField>
+
+<ResponseField name="Tag" type="string">
+  The tag string of the owning `GameObject`. Shortcut for `GameObject.tag`.
+
+  ```csharp
+  public string Tag { get; }
+  ```
+</ResponseField>
+
+<ResponseField name="Scene" type="Scene?">
+  The scene the owning `GameObject` belongs to. `null` if the object has not been added to a scene.
+
+  ```csharp
+  public Scene? Scene { get; }
+  ```
+</ResponseField>
+
+<ResponseField name="Identifier" type="Guid">
+  Persistent GUID for this component instance. Survives serialization round-trips. Used by the prefab system to correlate components across copies.
+
+  ```csharp
+  public Guid Identifier { get; set; }
+  ```
+</ResponseField>
+
+<ResponseField name="HasAwoken" type="bool">
+  `true` after `Awake` has been called. The engine checks this flag to ensure `Awake` is only called once.
+
+  ```csharp
+  public bool HasAwoken { get; internal set; }
+  ```
+</ResponseField>
+
+<ResponseField name="HasStarted" type="bool">
+  `true` after `Start` has been called. `OnDestroy` is only invoked when this is `true`.
+
+  ```csharp
+  public bool HasStarted { get; internal set; }
+  ```
+</ResponseField>
+
+<ResponseField name="ExecuteAlways" type="bool">
+  When `true` (set by `[ExecuteAlways]` attribute), lifecycle methods fire even when the game is not in play mode. Configurable at runtime but normally controlled by the attribute.
+
+  ```csharp
+  public bool ExecuteAlways { get; internal set; }
+  ```
+</ResponseField>
+
+---
+
+## Lifecycle Methods
+
+Override any of the following `virtual` methods in your derived class. You do **not** call the base implementation unless you explicitly need to chain behavior.
+
+<Tabs>
+  <Tab title="Initialization">
+
+### Awake
+
+Called once when the component is first created (or when the `GameObject` is instantiated), before any `Start` calls on any object. Use this to set up internal state that does not depend on other objects.
+
+```csharp
+public virtual void Awake() { }
+```
+
+<Tip>
+`Awake` fires even when the component is disabled. Use it for initialization that must happen regardless of enabled state.
+</Tip>
+
+---
+
+### OnEnable
+
+Called when the component becomes active — either when `Awake` completes (if already active) or whenever `Enabled` transitions to `true`.
+
+```csharp
+public virtual void OnEnable() { }
+```
+
+---
+
+### Start
+
+Called once, on the first frame the component is active **and** after all `Awake` calls for the current frame have completed. Safe to reference other components here.
+
+```csharp
+public virtual void Start() { }
+```
+
+  </Tab>
+  <Tab title="Per-Frame">
+
+### Update
+
+Called every frame while the component is active. The primary place for game logic, input handling, and non-physics movement.
+
+```csharp
+public virtual void Update() { }
+```
+
+---
+
+### LateUpdate
+
+Called every frame, **after** all `Update` calls across all components have completed. Ideal for camera follow logic or anything that must react to positions set in `Update`.
+
+```csharp
+public virtual void LateUpdate() { }
+```
+
+---
+
+### FixedUpdate
+
+Called at a fixed time step by the physics subsystem (via `SceneManager.PhysicsUpdate`). Use this for Rigidbody forces, collision response, and any physics-driven logic.
+
+```csharp
+public virtual void FixedUpdate() { }
+```
+
+  </Tab>
+  <Tab title="Disable / Destroy">
+
+### OnDisable
+
+Called when the component becomes inactive — either by setting `Enabled = false`, disabling the owning `GameObject`, or just before `OnDestroy`.
+
+```csharp
+public virtual void OnDisable() { }
+```
+
+---
+
+### OnDestroy
+
+Called just before the component is permanently removed. Only fires if `HasStarted` is `true` (i.e. the component was active at least once). Release references and unsubscribe events here.
+
+```csharp
+public virtual void OnDestroy() { }
+```
+
+---
+
+### OnLevelWasLoaded
+
+Called on every `MonoBehaviour` in a scene immediately after that scene finishes loading via `SceneManager.LoadScene`.
+
+```csharp
+public virtual void OnLevelWasLoaded() { }
+```
+
+  </Tab>
+</Tabs>
+
+---
+
+## Render Hooks
+
+These methods are called by the rendering pipeline. They only fire on components attached to the same `GameObject` as the relevant `Camera`, unless noted.
+
+<ResponseField name="DrawGizmos" type="virtual void">
+  Called by the editor's gizmo pass. Draw debug shapes and handles for every object in the scene.
+
+  ```csharp
+  public virtual void DrawGizmos() { }
+  ```
+</ResponseField>
+
+<ResponseField name="DrawGizmosSelected" type="virtual void">
+  Same as `DrawGizmos` but only fires when this object is selected in the editor hierarchy.
+
+  ```csharp
+  public virtual void DrawGizmosSelected() { }
+  ```
+</ResponseField>
+
+<ResponseField name="OnGUI" type="virtual void">
+  Called for in-game/runtime UI rendering on any camera with a `GUILayer` component.
+
+  ```csharp
+  public virtual void OnGUI(Gui gui) { }
+  ```
+
+  <ParamField path="gui" type="Gui" required>
+    The Prowl GUI context for this frame. Use it to issue draw calls and handle input.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="OnRenderImage" type="virtual void">
+  Called after the camera attached to this `GameObject` has rendered the scene. Implement post-processing effects here. Use `[ImageEffectOpaque]` to run before transparent geometry.
+
+  ```csharp
+  public virtual void OnRenderImage(RenderTexture src, RenderTexture dest) { }
+  ```
+
+  <ParamField path="src" type="RenderTexture" required>
+    The source render texture containing the rendered scene.
+  </ParamField>
+  <ParamField path="dest" type="RenderTexture" required>
+    The destination render texture to write the processed image into.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="OnPreCull" type="virtual void">
+  Called right before the camera begins its culling pass.
+
+  ```csharp
+  public virtual void OnPreCull(Camera camera) { }
+  ```
+</ResponseField>
+
+<ResponseField name="OnPreRender" type="virtual void">
+  Called right before the camera starts rendering the scene (after culling).
+
+  ```csharp
+  public virtual void OnPreRender(Camera camera) { }
+  ```
+</ResponseField>
+
+<ResponseField name="OnPostRender" type="virtual void">
+  Called after the camera has finished rendering the scene.
+
+  ```csharp
+  public virtual void OnPostRender(Camera camera) { }
+  ```
+</ResponseField>
+
+---
+
+## Coroutine API
+
+Coroutines let you spread work across multiple frames without threads, using C#'s `IEnumerator` / `yield return` syntax.
+
+<Warning>
+Prowl's coroutine system is keyed by **method name string**, not by `IEnumerator` instance. You cannot have two concurrent coroutines with the same method name on the same component.
+</Warning>
+
+### StartCoroutine
+
+Starts a coroutine identified by its method name. The method must return `IEnumerator` and take no parameters.
+
+```csharp
+public Coroutine StartCoroutine(string methodName)
+```
+
+<ParamField path="methodName" type="string" required>
+  The name of the coroutine method. Leading and trailing whitespace is trimmed. Must exist on the component class (public, private, or protected).
+</ParamField>
+
+<ResponseField name="returns" type="Coroutine">
+  A `Coroutine` handle that can be yielded inside another coroutine to wait for completion. Returns `null` if the method was not found.
+</ResponseField>
+
+```csharp
+public override void Start()
+{
+    StartCoroutine("FadeIn");
+}
+
+private IEnumerator FadeIn()
+{
+    float alpha = 0f;
+    while (alpha < 1f)
+    {
+        alpha += 0.05f;
+        SetAlpha(alpha);
+        yield return new WaitForSeconds(0.016f);
+    }
+}
+```
+
+---
+
+### StopCoroutine
+
+Stops the coroutine with the given method name. Has no effect if no coroutine with that name is running.
+
+```csharp
+public void StopCoroutine(string methodName)
+```
+
+<ParamField path="methodName" type="string" required>
+  The name of the coroutine method to stop.
+</ParamField>
+
+---
+
+### StopAllCoroutines
+
+Stops all running coroutines on this component (regular, end-of-frame, and fixed-update queues).
+
+```csharp
+public void StopAllCoroutines()
+```
+
+```csharp
+public override void OnDisable()
+{
+    StopAllCoroutines(); // clean up on disable
+}
+```
+
+---
+
+## Yield Instructions
+
+Use these inside a coroutine's `yield return` statement to pause execution.
+
+<Accordion title="WaitForSeconds">
+
+Suspends the coroutine for approximately `seconds` game-time seconds (measured against `Time.time`).
+
+```csharp
+public class WaitForSeconds : YieldInstruction
+{
+    public double Duration { get; private set; }
+    public WaitForSeconds(float seconds)
+}
+```
+
+```csharp
+yield return new WaitForSeconds(2.5f); // wait 2.5 s
+```
+
+</Accordion>
+
+<Accordion title="WaitForEndOfFrame">
+
+Resumes the coroutine at the very end of the current frame, after all cameras and GUI have been rendered, just before the frame is presented to the display.
+
+```csharp
+public class WaitForEndOfFrame : YieldInstruction { }
+```
+
+```csharp
+yield return new WaitForEndOfFrame();
+```
+
+</Accordion>
+
+<Accordion title="WaitForFixedUpdate">
+
+Resumes the coroutine on the next physics fixed-update tick (next call to `SceneManager.PhysicsUpdate`).
+
+```csharp
+public class WaitForFixedUpdate : YieldInstruction { }
+```
+
+```csharp
+yield return new WaitForFixedUpdate();
+```
+
+</Accordion>
+
+<Accordion title="Coroutine (yield another coroutine)">
+
+You can yield a `Coroutine` handle returned by `StartCoroutine` to wait until that coroutine finishes.
+
+```csharp
+public sealed class Coroutine : YieldInstruction
+{
+    internal bool isDone { get; private set; }
+    internal IEnumerator Enumerator { get; private set; }
+}
+```
+
+```csharp
+private IEnumerator Master()
+{
+    Coroutine sub = StartCoroutine("SubRoutine");
+    yield return sub; // wait until SubRoutine completes
+    Debug.Log("SubRoutine done!");
+}
+```
+
+</Accordion>
+
+---
+
+## Component API (mirrors GameObject)
+
+`MonoBehaviour` exposes the full component query API of `GameObject` as convenience methods so you do not need to write `GameObject.GetComponent<T>()` everywhere.
+
+<Tabs>
+  <Tab title="Add / Remove">
+    ```csharp
+    public T AddComponent<T>() where T : MonoBehaviour, new()
+    public MonoBehaviour AddComponent(Type type)
+    public void RemoveComponent<T>(T component) where T : MonoBehaviour
+    public void RemoveComponent(MonoBehaviour component)
+    public void RemoveSelf()   // removes this component from its GameObject
+    ```
+  </Tab>
+  <Tab title="Get (single)">
+    ```csharp
+    public T? GetComponent<T>() where T : MonoBehaviour
+    public MonoBehaviour? GetComponent(Type type)
+    public MonoBehaviour? GetComponentByIdentifier(Guid identifier)
+    public bool TryGetComponent<T>(out T component) where T : MonoBehaviour
+    ```
+  </Tab>
+  <Tab title="Get (multiple)">
+    ```csharp
+    public IEnumerable<T> GetComponents<T>() where T : MonoBehaviour
+    public IEnumerable<MonoBehaviour> GetComponents(Type type)
+    ```
+  </Tab>
+  <Tab title="In Parents">
+    ```csharp
+    public T? GetComponentInParent<T>(bool includeSelf = true) where T : MonoBehaviour
+    public MonoBehaviour? GetComponentInParent(Type componentType, bool includeSelf = true)
+    public IEnumerable<T> GetComponentsInParent<T>(bool includeSelf = true) where T : MonoBehaviour
+    public IEnumerable<MonoBehaviour> GetComponentsInParent(Type type, bool includeSelf = true)
+    ```
+  </Tab>
+  <Tab title="In Children">
+    ```csharp
+    public T? GetComponentInChildren<T>(bool includeSelf = true) where T : MonoBehaviour
+    public MonoBehaviour? GetComponentInChildren(Type componentType, bool includeSelf = true)
+    public IEnumerable<T> GetComponentsInChildren<T>(bool includeSelf = true) where T : MonoBehaviour
+    public IEnumerable<MonoBehaviour> GetComponentsInChildren(Type type, bool includeSelf = true)
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Messaging
+
+```csharp
+public void BroadcastMessage(string methodName, params object[] objs)
+public void SendMessage(string methodName, params object[] objs)
+public bool CompareTag(string otherTag)
+```
+
+`BroadcastMessage` delegates to `GameObject.BroadcastMessage` (this object + all children). `SendMessage` delegates to `GameObject.SendMessage` (this object only). `CompareTag` delegates to `GameObject.CompareTag`.
+
+---
+
+## Sibling Index
+
+Controls the order of this component within the owning `GameObject`'s component list. Components are sorted by `[ExecutionOrder]` on `AddComponent`, but you can fine-tune with sibling index.
+
+```csharp
+public int? GetSiblingIndex()
+public void SetSiblingIndex(int index)
+```
+
+---
+
+## Attributes
+
+Apply these attributes to your `MonoBehaviour` subclass to configure engine behavior.
+
+<CardGroup cols={2}>
+  <Card title="[AddComponentMenu]" icon="list">
+    Controls where the component appears in the editor's **Add Component** menu.
+
+    ```csharp
+    [AddComponentMenu("Effects/Bloom Controller")]
+    public class BloomController : MonoBehaviour { }
+    ```
+
+    <ResponseField name="Path" type="string">
+      The menu path, using `/` as separator.
+    </ResponseField>
+  </Card>
+
+  <Card title="[ExecuteAlways]" icon="play">
+    Makes lifecycle methods (`Update`, `Awake`, etc.) run even when the editor is **not** in play mode.
+
+    ```csharp
+    [ExecuteAlways]
+    public class GridSnap : MonoBehaviour { }
+    ```
+  </Card>
+
+  <Card title="[ExecutionOrder]" icon="arrow-down-1-9">
+    Sets a numeric priority that determines component update order. Lower numbers run first. Default is `0`.
+
+    ```csharp
+    [ExecutionOrder(-100)]
+    public class InputManager : MonoBehaviour { }
+    ```
+
+    <ResponseField name="Order" type="int">
+      Execution priority. Negative values run before the default; positive values run after.
+    </ResponseField>
+  </Card>
+
+  <Card title="[RequireComponent]" icon="link">
+    Declares component dependencies. Prowl automatically adds missing required types when this component is added to a `GameObject`, and prevents removal if a dependent is present.
+
+    ```csharp
+    [RequireComponent(typeof(Transform), typeof(Rigidbody))]
+    public class Vehicle : MonoBehaviour { }
+    ```
+
+    <ResponseField name="types" type="Type[]">
+      One or more component types that must co-exist on the same `GameObject`.
+    </ResponseField>
+  </Card>
+</CardGroup>
+
+### Image Effect Attributes
+
+These attributes modify the behavior of `OnRenderImage` callbacks.
+
+| Attribute | Effect |
+|-----------|--------|
+| `[ImageEffectOpaque]` | Runs `OnRenderImage` before the transparent geometry pass. |
+| `[ImageEffectAllowedInSceneView]` | The effect is also applied in the editor scene view camera. |
+| `[ImageEffectTransformsToLDR]` | Signals that this effect converts the buffer from HDR to LDR. |
+
+```csharp
+[ImageEffectOpaque]
+[ImageEffectAllowedInSceneView]
+public class DepthFog : MonoBehaviour
+{
+    public override void OnRenderImage(RenderTexture src, RenderTexture dest)
+    {
+        // apply fog effect
+    }
+}
+```
+
+---
+
+## Minimal Script Example
+
+```csharp
+using Prowl.Runtime;
+
+[AddComponentMenu("Gameplay/Rotate Object")]
+[ExecutionOrder(10)]
+public class RotateObject : MonoBehaviour
+{
+    public float speed = 45f;  // degrees per second
+
+    public override void Awake()
+    {
+        Debug.Log($"{Name} awakening");
+    }
+
+    public override void Update()
+    {
+        Transform.localEulerAngles += new System.Numerics.Vector3(0, speed * Time.deltaTime, 0);
+    }
+
+    public override void OnDestroy()
+    {
+        Debug.Log($"{Name} destroyed");
+    }
+}
+```

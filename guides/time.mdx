@@ -1,0 +1,304 @@
+---
+title: 'Time and Timestep Management in Prowl'
+sidebarTitle: 'Time'
+description: 'Control frame timing in Prowl using the Time class: deltaTime, fixedDeltaTime, timeScale, smoothDeltaTime, and the fixed physics timestep loop.'
+---
+
+Every interactive simulation runs at a variable frame rate, which means the amount of time that passes between two consecutive `Update()` calls is never the same twice. Prowl's `Time` class gives you the tools to account for this variation: per-frame deltas so your movement stays consistent at any frame rate, a fixed timestep for deterministic physics, a frame counter, and a `timeScale` multiplier that lets you implement slow motion or pausing with a single line of code. All of these properties read from a stack of `TimeData` objects, so sub-systems like cutscenes can push their own time context without affecting the rest of the game.
+
+## Core Properties
+
+### deltaTime and deltaTimeF
+
+`Time.deltaTime` (double) and `Time.deltaTimeF` (float) return the number of seconds elapsed since the previous frame, scaled by `Time.timeScale`. This is the value you multiply against any per-frame movement or rate to make it frame-rate independent.
+
+```csharp
+public class Mover : MonoBehaviour
+{
+    public float speed = 5f; // units per second
+
+    public override void Update()
+    {
+        // Moves exactly 5 units per second regardless of frame rate
+        Transform.position += Transform.Forward * speed * Time.deltaTimeF;
+    }
+}
+```
+
+<Warning>
+Never hardcode a per-frame movement amount like `Transform.position += Vector3.Forward * 0.1f`. On a 60 Hz display that moves 6 u/s; on a 144 Hz display it moves 14.4 u/s. Always multiply by `Time.deltaTimeF`.
+</Warning>
+
+### unscaledDeltaTime
+
+`Time.unscaledDeltaTime` is the raw wall-clock frame duration, unaffected by `timeScale`. Use it for UI animations, audio pitch, or any system that should continue running at normal speed even when the game is paused.
+
+```csharp
+public class PauseMenu : MonoBehaviour
+{
+    private float _fadeAlpha = 0f;
+    public float fadeSpeed = 2f;
+
+    public override void Update()
+    {
+        // Fade in even though timeScale == 0 (game is paused)
+        _fadeAlpha = Math.Min(1f, _fadeAlpha + (float)Time.unscaledDeltaTime * fadeSpeed);
+        SetMenuAlpha(_fadeAlpha);
+    }
+}
+```
+
+### time and unscaledTotalTime
+
+`Time.time` is the total accumulated **scaled** elapsed time since the application started. `Time.unscaledTotalTime` is the same but unaffected by scale changes.
+
+```csharp
+public class OscillatingLight : MonoBehaviour
+{
+    public float frequency = 2f;
+    public float minIntensity = 0.5f;
+    public float maxIntensity = 2f;
+
+    public override void Update()
+    {
+        float t = (float)Math.Sin(Time.time * frequency * Math.PI * 2) * 0.5f + 0.5f;
+        GetComponent<Light>().Intensity = Math.Lerp(minIntensity, maxIntensity, t);
+    }
+}
+```
+
+### fixedDeltaTime
+
+`Time.fixedDeltaTime` returns `1.0 / PhysicsSettings.TargetFrameRate` (defaults to `1.0 / 50 = 0.02 s`). Use this value inside `FixedUpdate()` for any calculation that must match the physics step rate exactly.
+
+```csharp
+public class SpringArm : MonoBehaviour
+{
+    public float stiffness = 80f;
+    private float _velocity;
+    private float _pos;
+
+    public override void FixedUpdate()
+    {
+        // Spring physics — uses fixed step so it stays stable
+        float dt = (float)Time.fixedDeltaTime;
+        float force = -stiffness * _pos;
+        _velocity += force * dt;
+        _pos      += _velocity * dt;
+        Transform.localPosition = new Vector3(0, _pos, 0);
+    }
+}
+```
+
+### frameCount
+
+`Time.frameCount` is a monotonically increasing counter incremented once per rendered frame. Use it to spread heavy work across frames with a modulo check.
+
+```csharp
+public class LodUpdater : MonoBehaviour
+{
+    public override void Update()
+    {
+        // Only recompute LOD on every 4th frame to save CPU
+        if (Time.frameCount % 4 == 0)
+            RecomputeLOD();
+    }
+}
+```
+
+## Time Scale
+
+`Time.timeScale` is a multiplier applied to `deltaTime` and `time`. The default is `1.0`. Setting it to `0` effectively pauses all scaled time; setting it to `0.25` creates quarter-speed slow motion.
+
+```csharp
+public class BulletTimeEffect : MonoBehaviour
+{
+    public float slowScale   = 0.2f;
+    public float duration    = 3f;
+    private bool _active;
+
+    public override void Update()
+    {
+        if (Input.GetKeyDown(Key.Q) && !_active)
+            StartCoroutine("ActivateBulletTime");
+    }
+
+    IEnumerator ActivateBulletTime()
+    {
+        _active = true;
+        Time.timeScale = slowScale;
+
+        // Use unscaledDeltaTime so the timer ticks in real-world seconds
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            elapsed += (float)Time.unscaledDeltaTime;
+            yield return null;
+        }
+
+        Time.timeScale = 1.0;
+        _active = false;
+    }
+}
+```
+
+<Note>
+`WaitForSeconds` inside a coroutine uses scaled `Time.time`, so it also slows down with `timeScale`. To time something in real-world seconds while time is scaled, accumulate `Time.unscaledDeltaTime` manually as shown above.
+</Note>
+
+### Pausing the Game
+
+```csharp
+public class GamePauser : MonoBehaviour
+{
+    private bool _paused = false;
+
+    public override void Update()
+    {
+        if (Input.GetKeyDown(Key.Escape))
+            SetPaused(!_paused);
+    }
+
+    public void SetPaused(bool paused)
+    {
+        _paused        = paused;
+        Time.timeScale = paused ? 0.0 : 1.0;
+        Input.CursorLocked  = !paused;
+        Input.CursorVisible = paused;
+    }
+}
+```
+
+## Smooth Delta Time
+
+`Time.smoothDeltaTime` is an exponentially weighted moving average of the raw frame delta, smoothed using `timeSmoothFactor` (default `0.25`). It dampens sudden spikes caused by garbage collection or asset loading, making it useful for values that should feel silky even under jitter.
+
+```csharp
+public class FrameRateDisplay : MonoBehaviour
+{
+    private float _smoothFPS;
+
+    public override void Update()
+    {
+        // smoothDeltaTime gives a stable FPS counter that doesn't thrash
+        if (Time.smoothDeltaTime > 0f)
+            _smoothFPS = 1f / (float)Time.smoothDeltaTime;
+    }
+}
+```
+
+You can tune the smoothing by adjusting `Time.timeSmoothFactor`. A value closer to `1.0` responds faster; closer to `0.0` smooths more aggressively.
+
+```csharp
+// Aggressive smoothing — good for analytics displays
+Time.timeSmoothFactor = 0.05;
+
+// Responsive smoothing — good for per-frame spring dampers
+Time.timeSmoothFactor = 0.5;
+```
+
+## The TimeData Stack
+
+Every `Time` property reads from `Time.CurrentTime`, which is the top of `Time.TimeStack`. Sub-systems (e.g., a replay recorder, a cutscene player) can push a custom `TimeData` instance to run with isolated time without affecting global time.
+
+```csharp
+// Enter a sub-context with its own independent time
+var replayTime = new TimeData();
+Time.TimeStack.Push(replayTime);
+
+// ... replay ticks replayTime.Update() on its own schedule ...
+
+// Restore global time context
+Time.TimeStack.Pop();
+```
+
+## Property Summary
+
+<CardGroup cols={2}>
+  <Card title="Time.deltaTime / deltaTimeF" icon="stopwatch">
+    Scaled frame delta as `double` / `float`. Multiply against per-frame rates.
+  </Card>
+  <Card title="Time.unscaledDeltaTime" icon="clock">
+    Raw frame delta, unaffected by `timeScale`. Use for UI, audio, and pause-safe logic.
+  </Card>
+  <Card title="Time.time" icon="timeline">
+    Total scaled elapsed time since start. Ideal for sinusoidal oscillators and offsets.
+  </Card>
+  <Card title="Time.unscaledTotalTime" icon="timer">
+    Total real-world elapsed time. Unaffected by scale; useful for session telemetry.
+  </Card>
+  <Card title="Time.fixedDeltaTime" icon="gears">
+    `1.0 / PhysicsSettings.TargetFrameRate`. The timestep used in `FixedUpdate()`.
+  </Card>
+  <Card title="Time.frameCount" icon="list-ol">
+    Frames rendered since launch. Use for frame-staggered work.
+  </Card>
+  <Card title="Time.timeScale" icon="gauge-high">
+    Global time multiplier. `0` = paused, `0.5` = half speed, `1` = normal.
+  </Card>
+  <Card title="Time.smoothDeltaTime" icon="wave-sine">
+    Exponentially smoothed frame delta. Use for smooth display values and spring dampers.
+  </Card>
+</CardGroup>
+
+## Full Example: Frame-Rate Independent Systems
+
+```csharp
+public class GameLoop : MonoBehaviour
+{
+    // --- Continuous rotation — always 45°/s regardless of FPS ---
+    public class Spinner : MonoBehaviour
+    {
+        public override void Update()
+            => Transform.Rotate(Vector3.Up, 45f * Time.deltaTimeF);
+    }
+
+    // --- Spring-damped follow camera using smoothDeltaTime ---
+    public class FollowCamera : MonoBehaviour
+    {
+        public Transform target;
+        public float stiffness = 8f;
+
+        public override void LateUpdate()
+        {
+            Transform.position = Vector3.Lerp(
+                Transform.position,
+                target.position + new Vector3(0, 3, -8),
+                stiffness * (float)Time.smoothDeltaTime
+            );
+        }
+    }
+
+    // --- Countdown timer unaffected by bullet-time ---
+    public class RealTimeCountdown : MonoBehaviour
+    {
+        public float totalSeconds = 10f;
+        private float _remaining;
+
+        public override void Start()  => _remaining = totalSeconds;
+
+        public override void Update()
+        {
+            _remaining -= (float)Time.unscaledDeltaTime;
+            if (_remaining <= 0f)
+                Debug.Log("Time's up!");
+        }
+    }
+
+    // --- Physics integration at fixed step ---
+    public class VerletParticle : MonoBehaviour
+    {
+        private Vector3 _pos, _prevPos;
+        public Vector3 gravity = new(0, -9.81f, 0);
+
+        public override void FixedUpdate()
+        {
+            float dt = (float)Time.fixedDeltaTime;
+            Vector3 vel = _pos - _prevPos;
+            _prevPos = _pos;
+            _pos += vel + gravity * dt * dt;
+            Transform.position = _pos;
+        }
+    }
+}
+```

@@ -1,0 +1,255 @@
+---
+title: 'Physics API — Raycast and World Control'
+sidebarTitle: 'Physics'
+description: 'Reference for Prowl's static Physics class: raycast overloads, layer collision matrix, PhysicsSetting configuration, and access to the Jitter2 World.'
+---
+
+Prowl's physics system is powered by [Jitter2](https://github.com/notgiven688/jitterphysics2), a high-performance rigid-body simulation library for .NET. The static `Physics` class wraps Jitter2's `World` object and exposes it through a Prowl-idiomatic API: raycasting with optional max-distance and layer-mask filtering, a symmetric layer collision matrix for controlling which game-object layers interact, and a `PhysicsSetting` singleton that is serialised as a project setting. The physics step is advanced each frame by `Physics.Update()`, which accumulates time and fires fixed-timestep substeps to keep the simulation stable regardless of frame rate.
+
+## Physics.World
+
+```csharp
+public static World World { get; }
+```
+
+The underlying Jitter2 `World` instance. Lazily created on first access with a `LayerFilter` broad-phase filter that checks the layer collision matrix before running narrow-phase tests. Use this property when you need direct Jitter2 API access (e.g., adding constraints, querying contact manifolds).
+
+<Warning>
+Do not call `World.Step()` manually. Use `Physics.Update()` so the engine's fixed-timestep accumulator is respected.
+</Warning>
+
+---
+
+## Physics.Update
+
+```csharp
+public static void Update()
+```
+
+Advances the physics simulation. Internally:
+1. Accumulates `Time.deltaTime` into an internal timer.
+2. Fires up to 10 fixed-timestep substeps while the timer exceeds `Time.fixedDeltaTime`.
+3. Before each step, applies `PhysicsSetting` values (`SolverIterations`, `RelaxIterations`, `Substep`, `AllowSleep`, `Gravity`) to the `World`.
+4. If `PhysicsSetting.UseMultithreading` is `true`, Jitter2 parallelises the substep across available CPU cores.
+5. Calls `SceneManager.PhysicsUpdate()` each substep so scripts can run `FixedUpdate` logic.
+
+---
+
+## Raycasting
+
+All raycast overloads return `true` if the ray hit a collider and `false` otherwise. The `direction` parameter is normalised internally before the cast.
+
+### Overloads
+
+<Tabs>
+<Tab title="Simple hit test">
+```csharp
+public static bool Raycast(Vector3 origin, Vector3 direction)
+```
+Returns `true` if any collider is hit. No hit information is returned.
+</Tab>
+<Tab title="Hit info">
+```csharp
+public static bool Raycast(Vector3 origin, Vector3 direction, out RaycastHit hitInfo)
+```
+Returns detailed information about the closest hit in `hitInfo`.
+</Tab>
+<Tab title="Max distance">
+```csharp
+public static bool Raycast(Vector3 origin, Vector3 direction, double maxDistance)
+```
+Only considers hits within `maxDistance` world units. No hit info returned.
+</Tab>
+<Tab title="Max distance + hit info">
+```csharp
+public static bool Raycast(Vector3 origin, Vector3 direction, double maxDistance, out RaycastHit hitInfo)
+```
+Max-distance cast with full hit information.
+</Tab>
+<Tab title="Layer mask">
+```csharp
+public static bool Raycast(Vector3 origin, Vector3 direction, double maxDistance, LayerMask layerMask)
+```
+Only hits colliders whose game-object layer is included in `layerMask`.
+</Tab>
+<Tab title="Layer mask + hit info">
+```csharp
+public static bool Raycast(Vector3 origin, Vector3 direction, out RaycastHit hitInfo, double maxDistance, LayerMask layerMask)
+```
+Layer-filtered max-distance cast with full hit information.
+</Tab>
+</Tabs>
+
+#### Parameters common to all overloads
+
+<ParamField path="origin" type="Vector3">
+  World-space start point of the ray.
+</ParamField>
+<ParamField path="direction" type="Vector3">
+  World-space direction. Normalised internally before casting.
+</ParamField>
+<ParamField path="maxDistance" type="double">
+  Maximum distance to consider hits. Hits beyond this distance are ignored.
+</ParamField>
+<ParamField path="layerMask" type="LayerMask">
+  Bit mask of layer indices to include. Only colliders on included layers are tested.
+</ParamField>
+<ParamField path="hitInfo" type="out RaycastHit">
+  Populated with hit data when the cast returns `true`.
+</ParamField>
+
+```csharp
+// Simple hit test
+if (Physics.Raycast(transform.position, transform.forward))
+    Debug.Log("Hit something!");
+
+// Full hit info
+if (Physics.Raycast(transform.position, transform.forward, out RaycastHit hit))
+{
+    Debug.Log($"Hit {hit.rigidbody?.GameObject?.Name} at {hit.point}, distance: {hit.distance:F2}");
+}
+
+// Layer-masked raycast
+LayerMask enemies = LayerMask.FromNames("Enemy", "Boss");
+if (Physics.Raycast(origin, direction, out RaycastHit h, 50.0, enemies))
+    h.rigidbody.ApplyImpulse(direction * 10);
+```
+
+---
+
+## RaycastHit
+
+`RaycastHit` is a value type (`struct`) that carries all information about a single physics ray intersection.
+
+<ResponseField name="hit" type="bool">
+  Whether the ray actually intersected something. This is `true` when the struct has been filled by a successful cast.
+</ResponseField>
+<ResponseField name="distance" type="double">
+  Distance from `origin` to the impact point (`Lambda` from Jitter2's result).
+</ResponseField>
+<ResponseField name="point" type="Vector3">
+  World-space position of the impact point, computed as `origin + direction * distance`.
+</ResponseField>
+<ResponseField name="normal" type="Vector3">
+  World-space surface normal at the hit point.
+</ResponseField>
+<ResponseField name="rigidbody" type="Rigidbody3D">
+  The `Rigidbody3D` component attached to the struck object. May be `null` if the shape has no user data.
+</ResponseField>
+<ResponseField name="shape" type="RigidBodyShape">
+  The specific Jitter2 `RigidBodyShape` that was hit, useful for sub-mesh or compound-shape identification.
+</ResponseField>
+<ResponseField name="transform" type="Transform">
+  The `Transform` of the hit rigidbody's `GameObject`. Shorthand for `rigidbody?.GameObject?.Transform`.
+</ResponseField>
+
+---
+
+## Layer Collision Matrix
+
+The collision matrix controls which pairs of layers are allowed to generate contacts. It is stored symmetrically — enabling `(layer1, layer2)` automatically enables `(layer2, layer1)`.
+
+### SetLayerCollision
+
+```csharp
+public static void SetLayerCollision(int layer1Index, int layer2Index, bool shouldCollide)
+```
+
+Sets whether two specific layers should collide.
+
+<ParamField path="layer1Index" type="int">First layer index (0-based).</ParamField>
+<ParamField path="layer2Index" type="int">Second layer index (0-based).</ParamField>
+<ParamField path="shouldCollide" type="bool">Whether physics contacts should be generated between these layers.</ParamField>
+
+### GetLayerCollision
+
+```csharp
+public static bool GetLayerCollision(int layer1, int layer2)
+```
+
+Returns `true` if the two layers are set to collide.
+
+### SetLayerCollisions
+
+```csharp
+public static void SetLayerCollisions(int layer, bool shouldCollide)
+```
+
+Sets all entries in a given layer's row and column — effectively enabling or disabling collisions between that layer and every other layer.
+
+### GetLayerCollisions
+
+```csharp
+public static bool[] GetLayerCollisions(int layer)
+```
+
+Returns the full collision row for `layer` as a bool array.
+
+### SetAllCollisions
+
+```csharp
+public static void SetAllCollisions(bool shouldCollide)
+```
+
+Sets every entry in the collision matrix to `shouldCollide`.
+
+### EnsureSymmetric
+
+```csharp
+public static void EnsureSymmetric()
+```
+
+Rebuilds the matrix to ensure symmetry after any manual edits to `PhysicsSetting.s_collisionMatrix`.
+
+```csharp
+// Prevent players from colliding with triggers
+Physics.SetLayerCollision(LayerIndex.Player, LayerIndex.Trigger, false);
+
+// Check if two layers collide
+bool collides = Physics.GetLayerCollision(LayerIndex.Enemy, LayerIndex.Bullet);
+```
+
+---
+
+## PhysicsSetting
+
+`PhysicsSetting` is a `ScriptableSingleton<PhysicsSetting>` serialised to `PhysicsSettings.projsetting`. Access it via `PhysicsSetting.Instance`.
+
+<ResponseField name="Gravity" type="Vector3">
+  World gravity vector. Default: `(0, -9.81, 0)`.
+</ResponseField>
+<ResponseField name="SolverIterations" type="int">
+  Number of velocity constraint solver iterations per substep. Range `[1, 16]`. Default: `6`.
+</ResponseField>
+<ResponseField name="RelaxIterations" type="int">
+  Number of position correction (relaxation) iterations. Range `[0, 16]`. Default: `4`.
+</ResponseField>
+<ResponseField name="Substep" type="int">
+  Number of Jitter2 substeps per fixed-timestep tick. Range `[1, 16]`. Default: `1`.
+</ResponseField>
+<ResponseField name="TargetFrameRate" type="int">
+  Fixed-timestep target in Hz. Determines `Time.fixedDeltaTime = 1.0 / TargetFrameRate`. Range `[5, 120]`. Default: `50`.
+</ResponseField>
+<ResponseField name="AllowSleep" type="bool">
+  Whether Jitter2 may deactivate sleeping rigid bodies for performance. Default: `true`.
+</ResponseField>
+<ResponseField name="UseMultithreading" type="bool">
+  Whether Jitter2 parallelises the substep across CPU threads. Default: `true`.
+</ResponseField>
+<ResponseField name="AutoSyncTransforms" type="bool">
+  When `true`, `Rigidbody3D` components automatically write simulation results back to `Transform` after each step.
+</ResponseField>
+<ResponseField name="s_collisionMatrix" type="Boolean32Matrix">
+  The raw 32×32 symmetric collision matrix. Prefer the `Physics.SetLayerCollision` API over direct access.
+</ResponseField>
+
+---
+
+## Physics.Clear
+
+```csharp
+[OnAssemblyLoad, OnAssemblyUnload, OnSceneLoad, OnSceneUnload, OnPlaymodeChanged]
+public static void Clear()
+```
+
+Calls `World.Clear()` to remove all rigid bodies and shapes. Invoked automatically on scene load/unload and playmode transitions.

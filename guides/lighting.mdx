@@ -1,0 +1,259 @@
+---
+title: 'Lighting Setup: Directional, Point, and Spot Lights'
+sidebarTitle: 'Lighting'
+description: 'Add and configure directional, point, and spot lights in Prowl, control intensity, color, shadow casting, and ambient scene lighting parameters.'
+---
+
+Prowl's lighting system is built around a frame-collected light list: every `Light` component calls `RenderPipeline.AddLight(this)` in its `Update()`, and the `DefaultRenderPipeline` processes that list at render time to build a GPU-side structured buffer (`_Lights`) that shaders read for PBR calculations and soft shadows. Four concrete light types are available — `DirectionalLight`, `PointLight`, `SpotLight`, and `AreaLight` — alongside scene-level parameters for ambient illumination and fog that are applied globally via `PropertyState`.
+
+## The Light Base Class
+
+All lights extend the abstract `Light : MonoBehaviour` class, which defines the properties common to every light type.
+
+```csharp
+public abstract class Light : MonoBehaviour, IRenderableLight
+{
+    public Color  color         = Color.white;
+    public float  intensity     = 16.0f;
+    public float  shadowBias    = 0.05f;   // [Range(0, 1)]
+    public float  shadowNormalBias = 1f;   // [Range(0, 3)]
+    public bool   castShadows   = true;
+}
+```
+
+<CardGroup cols={3}>
+  <Card title="color" icon="palette">
+    Linear HDR color of the light. Combine with `intensity` for physically based values.
+  </Card>
+  <Card title="intensity" icon="sun">
+    Brightness multiplier in scene units. The default of `16.0` is a reasonable daylight value for an HDR pipeline.
+  </Card>
+  <Card title="castShadows" icon="moon">
+    Toggle per-light shadow rendering. Shadows are rendered into the shared `ShadowAtlas` texture.
+  </Card>
+</CardGroup>
+
+## Directional Light
+
+`DirectionalLight` models an infinitely distant light source (sun, moon). All rays are parallel, so position is irrelevant — only the `GameObject.Transform.forward` direction matters. It casts orthographic shadows over a configurable `shadowDistance`.
+
+```csharp
+GameObject sunObject = new GameObject("Sun");
+sunObject.Transform.rotation = Quaternion.Euler(45f, 60f, 0f); // pitch and yaw
+
+DirectionalLight sun = sunObject.AddComponent<DirectionalLight>();
+sun.color             = new Color(1.0f, 0.95f, 0.85f, 1f); // Warm sunlight
+sun.intensity         = 20f;
+sun.castShadows       = true;
+sun.shadowResolution  = DirectionalLight.Resolution._2048;
+sun.shadowDistance    = 80f;   // Orthographic shadow frustum half-size in world units
+sun.shadowRadius      = 1.5f;  // PCSS blocker search radius
+sun.qualitySamples    = 32;    // PCF sample count
+sun.blockerSamples    = 16;    // PCSS blocker sample count
+```
+
+### DirectionalLight Shadow Properties
+
+| Property | Type | Range | Description |
+|---|---|---|---|
+| `shadowResolution` | `Resolution` enum | 512–4096 | Shadow map texel resolution |
+| `shadowDistance` | float | 10–512 | Orthographic frustum half-width/height (world units) |
+| `shadowRadius` | float | 0.001–4 | Penumbra size for PCSS soft shadows |
+| `qualitySamples` | int | 8–32 | PCF sample count — higher is softer but slower |
+| `blockerSamples` | int | 8–32 | PCSS blocker search sample count |
+
+<Tip>
+The `DefaultRenderPipeline` snaps the directional light's position to a texel grid before rendering shadows, eliminating the shadow edge shimmer that occurs as the camera moves. This happens automatically and doesn't affect the light's actual `Transform.position`.
+</Tip>
+
+## Point Light
+
+`PointLight` emits light equally in all directions from a single world-space position, attenuating over `radius` units.
+
+```csharp
+GameObject lampObject = new GameObject("Lamp");
+lampObject.Transform.position = new Vector3(0, 3f, 0);
+
+PointLight lamp = lampObject.AddComponent<PointLight>();
+lamp.color      = new Color(1f, 0.7f, 0.3f, 1f); // Warm orange
+lamp.intensity  = 12f;
+lamp.radius     = 6f;          // Attenuation reaches zero at this distance
+lamp.castShadows = false;      // Point light shadow maps are expensive
+```
+
+<Note>
+Point lights do not currently cast shadows in the `DefaultRenderPipeline` — `GetShadowMatrix` returns identity matrices. They are still fully lit with per-pixel PBR calculations.
+</Note>
+
+## Spot Light
+
+`SpotLight` emits a cone of light from its position toward `Transform.forward`. The cone is defined by `angle` (cosine of the half-angle) and `falloff` (soft inner cone cosine), with range capped at `distance`.
+
+```csharp
+GameObject spotObject = new GameObject("Spotlight");
+spotObject.Transform.position = new Vector3(5f, 4f, 0f);
+spotObject.Transform.rotation = Quaternion.Euler(70f, 0f, 0f); // Point downward
+
+SpotLight spot = spotObject.AddComponent<SpotLight>();
+spot.color         = Color.white;
+spot.intensity     = 18f;
+spot.distance      = 10f;    // Maximum range in world units
+spot.angle         = 0.90f;  // Cosine of outer cone half-angle  (0–1 range)
+spot.falloff       = 0.96f;  // Cosine of inner cone half-angle  (0–1, must be > angle)
+spot.castShadows   = true;
+spot.shadowRadius  = 0.8f;
+spot.qualitySamples = 16;
+```
+
+<Note>
+`angle` and `falloff` are stored as cosine values (0 = 90°, 1 = 0°). A value of `0.97` corresponds to roughly a 14° half-angle. To convert from degrees: `MathF.Cos(MathF.PI * degrees / 180f)`.
+</Note>
+
+## Area Light
+
+`AreaLight` is a rectangular emitter — useful for windows, monitors, or fluorescent ceiling panels. Shadow casting is not implemented for area lights; set `castShadows = false`.
+
+```csharp
+AreaLight areaLight = windowObject.AddComponent<AreaLight>();
+areaLight.color     = new Color(0.8f, 0.9f, 1.0f, 1f); // Cool daylight
+areaLight.intensity = 8f;
+areaLight.width     = 2.0f;   // Emitter width in world units
+areaLight.height    = 1.2f;   // Emitter height in world units
+areaLight.twoSided  = false;  // Emit from one face only
+areaLight.castShadows = false;
+```
+
+## Shadow System: ShadowAtlas
+
+All shadow maps share a single `RenderTexture` atlas. Prowl allocates atlas tiles dynamically each frame based on light distance from the camera — closer lights get higher-resolution tiles.
+
+<Accordion title="How the ShadowAtlas works">
+  The atlas is a single large `R32_Float` depth texture. Its size is either 8192×8192 (if the GPU supports it) or 4096×4096. The atlas is divided into 32-pixel tiles. Each shadow-casting light reserves a block of tiles proportional to its rendered resolution. At the start of every frame the atlas is cleared and all reservations reset.
+
+  ```csharp
+  // These are internal APIs used by DefaultRenderPipeline — for reference only
+  ShadowAtlas.TryInitialize();      // Called once; no-op if already initialized
+  ShadowAtlas.Clear();              // Called every frame before shadow rendering
+  Vector2Int? slot = ShadowAtlas.ReserveTiles(resolution, resolution, light.GetLightID());
+  RenderTexture atlas = ShadowAtlas.GetAtlas();
+  ```
+
+  The atlas texture is bound as `_ShadowAtlas` in shaders, where the `Standard.shader` reads it for PCSS soft shadow calculations.
+</Accordion>
+
+<Warning>
+If too many high-resolution shadow maps are requested in a single frame, `ShadowAtlas.ReserveTiles()` returns `null` for lights that cannot fit. Those lights will have their atlas coordinates set to `(-1, -1)` and will not cast shadows that frame. Reduce `shadowResolution` on secondary lights, or set `castShadows = false` on lights far from the camera.
+</Warning>
+
+## Scene-Level Ambient Lighting
+
+Ambient light is configured on the `Scene` object via `Scene.Ambient` (`AmbientLightParams`). The render pipeline reads this each frame and sets global shader uniforms (`prowl_AmbientColor`, `prowl_AmbientMode`, etc.).
+
+<Tabs>
+  <Tab title="Uniform Ambient">
+    A single flat color fills all shadowed areas. Fastest and suitable for most games.
+
+    ```csharp
+    Scene scene = SceneManagement.SceneManager.Scene;
+    scene.Ambient.Mode  = Scene.AmbientLightParams.AmbientMode.Uniform;
+    scene.Ambient.Color = new Vector4(0.12f, 0.12f, 0.18f, 1.0f); // Dark bluish
+    ```
+  </Tab>
+  <Tab title="Hemisphere Ambient">
+    Sky color applied to upward-facing normals, ground color to downward-facing normals. Produces subtle outdoor atmosphere.
+
+    ```csharp
+    Scene scene = SceneManagement.SceneManager.Scene;
+    scene.Ambient.Mode        = Scene.AmbientLightParams.AmbientMode.Hemisphere;
+    scene.Ambient.SkyColor    = new Vector4(0.3f, 0.4f, 0.6f, 1.0f);  // Sky blue
+    scene.Ambient.GroundColor = new Vector4(0.2f, 0.18f, 0.15f, 1.0f); // Earthy
+    ```
+  </Tab>
+</Tabs>
+
+## Fog Parameters
+
+Fog is also defined per-scene in `Scene.Fog` (`FogParams`). Three exponential and one linear mode are available.
+
+```csharp
+Scene scene = SceneManagement.SceneManager.Scene;
+
+// Exponential squared fog — most physically plausible look
+scene.Fog.Mode    = Scene.FogParams.FogMode.ExponentialSquared;
+scene.Fog.Color   = new Vector4(0.5f, 0.55f, 0.6f, 1.0f);
+scene.Fog.Density = 0.015f; // Higher = denser fog
+
+// Linear fog — sharp near/far transition
+scene.Fog.Mode  = Scene.FogParams.FogMode.Linear;
+scene.Fog.Start = 30f;   // Fog begins at this distance
+scene.Fog.End   = 120f;  // Fully opaque at this distance
+```
+
+| Mode | Description |
+|---|---|
+| `Off` | No fog |
+| `Linear` | Linear interpolation between `Start` and `End` distances |
+| `Exponential` | `exp(-density * distance)` |
+| `ExponentialSquared` | `exp(-(density * distance)²)` — default |
+
+<Note>
+Fog uniforms are set as globals (`prowl_FogColor`, `prowl_FogParams`, `prowl_FogStates`) by `DefaultRenderPipeline` each frame. The `Standard.shader` automatically reads and applies these. Custom shaders must `#include "Prowl.hlsl"` and use the `PROWL_FOG_COORDS` / `PROWL_APPLY_FOG` macros to participate in the fog system.
+</Note>
+
+## Procedural Sky
+
+The `DefaultRenderPipeline` renders a sky dome using the built-in `ProceduralSky.shader` when a camera's `ClearFlags` is set to `CameraClearFlags.Skybox`. The sky is drawn after opaque geometry using the sky dome mesh (`SkyDome.obj`), driven by the first directional light's direction to calculate sun position and atmospheric scattering.
+
+```csharp
+// Enable the procedural sky on the main camera
+Camera.Main.ClearFlags = CameraClearFlags.Skybox;
+
+// The sky reacts to the first DirectionalLight's Transform.forward automatically.
+// Rotate the sun object to change sky appearance:
+DirectionalLight sun = FindObjectOfType<DirectionalLight>();
+sun.GameObject.Transform.rotation = Quaternion.Euler(30f, 120f, 0f);
+```
+
+## Putting It Together: Scene Lighting Setup
+
+```csharp
+public class SceneLightingSetup : MonoBehaviour
+{
+    public override void Awake()
+    {
+        Scene scene = SceneManagement.SceneManager.Scene;
+
+        // --- Sun ---
+        GameObject sunGO = new GameObject("Sun");
+        sunGO.Transform.rotation = Quaternion.Euler(40f, 150f, 0f);
+        DirectionalLight sun = sunGO.AddComponent<DirectionalLight>();
+        sun.color            = new Color(1f, 0.95f, 0.85f, 1f);
+        sun.intensity        = 22f;
+        sun.castShadows      = true;
+        sun.shadowResolution = DirectionalLight.Resolution._2048;
+        sun.shadowDistance   = 60f;
+
+        // --- Fill point light ---
+        GameObject fillGO = new GameObject("FillLight");
+        fillGO.Transform.position = new Vector3(-5f, 2f, 3f);
+        PointLight fill = fillGO.AddComponent<PointLight>();
+        fill.color       = new Color(0.4f, 0.5f, 0.8f, 1f);
+        fill.intensity   = 6f;
+        fill.radius      = 12f;
+        fill.castShadows = false;
+
+        // --- Ambient ---
+        scene.Ambient.Mode     = Scene.AmbientLightParams.AmbientMode.Hemisphere;
+        scene.Ambient.SkyColor = new Vector4(0.25f, 0.35f, 0.5f, 1f);
+        scene.Ambient.GroundColor = new Vector4(0.15f, 0.12f, 0.1f, 1f);
+
+        // --- Fog ---
+        scene.Fog.Mode    = Scene.FogParams.FogMode.ExponentialSquared;
+        scene.Fog.Color   = new Vector4(0.55f, 0.6f, 0.65f, 1f);
+        scene.Fog.Density = 0.008f;
+
+        scene.Add(sunGO);
+        scene.Add(fillGO);
+    }
+}
+```

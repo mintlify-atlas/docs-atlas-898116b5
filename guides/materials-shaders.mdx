@@ -1,0 +1,304 @@
+---
+title: 'Materials, Shaders, and PBR in Prowl'
+sidebarTitle: 'Materials'
+description: 'Create PBR materials, configure shader properties and keywords, and assign materials to MeshRenderer components in Prowl Engine.'
+---
+
+Materials bridge your geometry and the GPU: every `MeshRenderer` holds a reference to a `Material`, which in turn holds a reference to a `Shader` asset plus all the per-instance property values (textures, floats, vectors, colors) that customize how that shader looks on that particular object. Prowl's material system separates shader-level keyword variants from per-draw property data, making it straightforward to share a single shader across thousands of objects while still giving each object a unique appearance.
+
+## The Material Resource
+
+A `Material` is a first-class `EngineObject` (saveable as a `.mat` asset). Its two core internal pieces are `PropertyState` (property values) and `KeywordState` (keyword overrides), both layered on top of a `Shader` reference.
+
+```csharp
+// Load a shader asset and create a material from it at runtime
+Shader standardShader = Application.AssetProvider.LoadAsset<Shader>("Defaults/Standard.shader");
+Material myMaterial = new Material(standardShader);
+
+// Assign basic PBR properties
+myMaterial.SetColor("_MainColor", new Color(0.8f, 0.2f, 0.2f, 1f)); // Red tint
+myMaterial.SetFloat("_AlphaClip", 0.1f);
+```
+
+### Constructor Signatures
+
+```csharp
+// Minimal — only a shader is required
+Material mat = new Material(shaderRef);
+
+// Full control — supply pre-built PropertyState and KeywordState
+Material mat = new Material(shaderRef, myPropertyState, myKeywordState);
+```
+
+<Note>
+Passing a `null` shader reference throws `ArgumentNullException` immediately. Always ensure the shader asset is loaded before constructing a material.
+</Note>
+
+## Setting Properties with PropertyState
+
+`PropertyState` is the dictionary of named GPU-uniform values stored in a material. Call the convenience methods on `Material` directly — they forward to the internal `_properties` block:
+
+```csharp
+Material mat = new Material(Application.AssetProvider.LoadAsset<Shader>("Defaults/Standard.shader"));
+
+// Textures
+Texture2D albedoTex = Application.AssetProvider.LoadAsset<Texture2D>("Textures/Rock_Albedo.png");
+mat.SetTexture("_AlbedoTex", albedoTex);
+
+Texture2D normalTex = Application.AssetProvider.LoadAsset<Texture2D>("Textures/Rock_Normal.png");
+mat.SetTexture("_NormalTex", normalTex);
+
+// Surface properties (metallic R, roughness G, ambient occlusion B)
+Texture2D surfaceTex = Application.AssetProvider.LoadAsset<Texture2D>("Textures/Rock_Surface.png");
+mat.SetTexture("_SurfaceTex", surfaceTex);
+
+// Scalars and colors
+mat.SetColor("_MainColor", Color.white);
+mat.SetFloat("_AlphaClip", 0.5f);
+
+// Vectors
+mat.SetVector("_Tiling", new System.Numerics.Vector2(2f, 2f));
+
+// Matrices (e.g. custom UV transforms)
+mat.SetMatrix("_UVMatrix", System.Numerics.Matrix4x4.Identity);
+```
+
+### Array Properties
+
+For effects that need to upload bulk data (e.g., a palette of colors or an array of sample offsets):
+
+```csharp
+mat.SetFloatArray("_Weights",   new float[] { 0.2f, 0.3f, 0.5f });
+mat.SetVectorArray("_Offsets",  new System.Numerics.Vector2[] { ... });
+mat.SetColorArray("_Palette",   new Color[] { Color.red, Color.green, Color.blue });
+mat.SetMatrixArray("_Instances",new System.Numerics.Matrix4x4[] { ... });
+```
+
+## Global Properties
+
+Global properties are set once and visible to every material and every shader in the current frame. The render pipeline uses them for built-in uniforms like `prowl_MatVP`, `_WorldSpaceCameraPos`, and fog parameters. You can add your own:
+
+```csharp
+// Visible to all shaders this frame — useful for time-based effects or global fog overrides
+Material.SetGlobalFloat("_GlobalTime", (float)Time.time);
+Material.SetGlobalColor("prowl_FogColor", new Color(0.5f, 0.6f, 0.7f, 1f));
+Material.SetGlobalTexture("_NoiseTex", noiseTexture);
+```
+
+<Warning>
+Global property state is cleared at the end of every frame by the render pipeline (`PropertyState.ClearGlobalData()`). Re-apply global values each frame from `Update()` or a `MonoBehaviour` hook like `OnPreRender`.
+</Warning>
+
+## Shader Keywords with KeywordState
+
+Keywords select between compiled shader variants. Toggle features (e.g., normal mapping, vertex colors, alpha clipping) without creating separate shader assets:
+
+```csharp
+// Enable a keyword variant
+mat.SetKeyword("_NORMALMAP", "1");
+
+// Disable a keyword variant (clear the value)
+mat.SetKeyword("_NORMALMAP", "0");
+
+// Check the default Standard shader — it uses tag-based pass selection rather
+// than keywords, but custom shaders can declare any keyword they need
+mat.SetKeyword("_ALPHATEST_ON", "1");
+```
+
+<Tip>
+Keywords are per-material (`_localKeywords`) so enabling a keyword on one material instance does not affect other materials sharing the same shader asset.
+</Tip>
+
+## MeshRenderer: Assigning a Material
+
+The `MeshRenderer` component drives visible geometry in the scene. It holds a `Mesh` asset reference, a `Material` asset reference, and a local `PropertyState` for per-instance overrides that don't require a separate material.
+
+```csharp
+[RequireComponent(typeof(MeshRenderer))]
+public class PropSetup : MonoBehaviour
+{
+    public override void Awake()
+    {
+        MeshRenderer renderer = GetComponent<MeshRenderer>();
+
+        // Assign mesh and material assets
+        renderer.Mesh     = Application.AssetProvider.LoadAsset<Mesh>("Models/Barrel.obj");
+        renderer.Material = Application.AssetProvider.LoadAsset<Material>("Materials/Barrel.mat");
+
+        // Per-instance property override — no new Material asset needed
+        renderer.Properties ??= new PropertyState();
+        renderer.Properties.SetColor("_MainColor", new Color(0.9f, 0.7f, 0.3f, 1f));
+    }
+}
+```
+
+`MeshRenderer.GetLayer()` returns `GameObject.layerIndex`, which the camera's `CullingMask` uses to include or exclude the object from rendering.
+
+## Built-in Standard Shader (PBR)
+
+The `Standard.shader` bundled with Prowl is a full PBR (Physically Based Rendering) shader using the Cook-Torrance BRDF with PCSS soft shadows. It renders in the `Opaque` render order pass and supports all built-in lights.
+
+### Properties
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `_AlbedoTex` | Texture2D | white | Base color (albedo) texture |
+| `_NormalTex` | Texture2D | normal | Tangent-space normal map |
+| `_SurfaceTex` | Texture2D | surface | R = metallic, G = roughness, B = AO |
+| `_MainColor` | Color | (1,1,1,1) | Tint multiplied over albedo |
+| `_AlphaClip` | Float | 0.5 | Alpha cutoff threshold for clip |
+
+```csharp
+Material pbrMat = new Material(
+    Application.AssetProvider.LoadAsset<Shader>("Defaults/Standard.shader"));
+
+pbrMat.SetTexture("_AlbedoTex", albedo);
+pbrMat.SetTexture("_NormalTex", normalMap);
+pbrMat.SetTexture("_SurfaceTex", surfaceMap);
+pbrMat.SetColor("_MainColor", Color.white);
+pbrMat.SetFloat("_AlphaClip", 0.5f);
+```
+
+<Note>
+The surface texture packs three channels: **R = metallic**, **G = roughness**, **B = ambient occlusion**. Export your maps in this packed format, or use Prowl's built-in `default_surface.png` which provides metallic = 0, roughness = 0.5, AO = 1.
+</Note>
+
+## StandardUnlit Shader
+
+`StandardUnlit.shader` is a minimal unlit pass — it samples `_AlbedoTex` and multiplies by `_MainColor`, with no lighting calculations. Use it for skybox planes, UI meshes rendered in world space, or emissive decals.
+
+```csharp
+Material unlitMat = new Material(
+    Application.AssetProvider.LoadAsset<Shader>("Defaults/StandardUnlit.shader"));
+
+unlitMat.SetTexture("_AlbedoTex", iconTexture);
+unlitMat.SetColor("_MainColor",   new Color(1f, 1f, 0f, 1f)); // Yellow tint
+```
+
+## Shader Asset Format
+
+Shader files use Prowl's declarative `.shader` format — a subset of HLSL with a custom header block. Here is an annotated minimal example:
+
+```hlsl
+Shader "MyGame/ToonShader"
+
+Properties
+{
+    _AlbedoTex("Albedo Texture", Texture2D) = "white"
+    _RampTex("Toon Ramp",        Texture2D) = "white"
+    _MainColor("Tint Color",     Color)     = (1, 1, 1, 1)
+    _RampThreshold("Threshold",  Float)     = 0.5
+}
+
+Pass "ToonOpaque"
+{
+    Tags { "RenderOrder" = "Opaque" }
+    Cull Back
+    DepthStencil DepthLessEqual
+
+    HLSLPROGRAM
+        #pragma vertex   Vertex
+        #pragma fragment Fragment
+
+        #include "Prowl.hlsl"   // Built-in camera/light uniforms
+
+        struct Attributes { float3 position : POSITION; float2 uv : TEXCOORD0; float3 normal : NORMAL; };
+        struct Varyings   { float4 position : SV_POSITION; float2 uv : TEXCOORD0; float3 worldNormal : NORMAL; };
+
+        Texture2D<float4> _AlbedoTex;  SamplerState sampler_AlbedoTex;
+        Texture2D<float4> _RampTex;    SamplerState sampler_RampTex;
+        float4 _MainColor;
+        float  _RampThreshold;
+
+        Varyings Vertex(Attributes i)
+        {
+            Varyings o;
+            o.position    = mul(PROWL_MATRIX_MVP, float4(i.position, 1.0));
+            o.uv          = i.uv;
+            o.worldNormal = normalize(mul((float3x3)prowl_ObjectToWorld, i.normal));
+            return o;
+        }
+
+        float4 Fragment(Varyings i) : SV_TARGET
+        {
+            float4 albedo = _AlbedoTex.Sample(sampler_AlbedoTex, i.uv) * _MainColor;
+            float  NdotL  = saturate(dot(i.worldNormal, _SunDir.xyz));
+            float  ramp   = _RampTex.Sample(sampler_RampTex, float2(NdotL, 0.5)).r;
+            return albedo * ramp;
+        }
+    ENDHLSL
+}
+```
+
+### Key concepts
+
+<Accordion title="Pass Tags">
+  The `"RenderOrder"` tag determines when this pass is drawn:
+  - `"Opaque"` — drawn in the main opaque geometry pass
+  - `"Transparent"` — drawn after opaque objects with depth writes typically disabled
+  - `"ShadowCaster"` — drawn into the shadow atlas during the shadow pass
+  - `"MotionVectors"` — drawn into the motion vector buffer when `DepthTextureMode.MotionVectors` is enabled
+
+  A shader can define multiple passes; each can carry different tags. The render pipeline selects passes by tag using `Shader.GetPassWithTag()`.
+</Accordion>
+
+<Accordion title="Prowl.hlsl Includes">
+  Always `#include "Prowl.hlsl"` to access built-in uniforms:
+  - `PROWL_MATRIX_MVP` — combined model–view–projection matrix
+  - `prowl_ObjectToWorld` — object-to-world transform
+  - `prowl_MatVP` — view–projection matrix
+  - `_WorldSpaceCameraPos` — camera world position
+  - `_SunDir` — primary directional light direction
+  - `_Time`, `_SinTime`, `_CosTime` — time values
+  - `prowl_FogColor`, `prowl_FogParams` — scene fog parameters
+</Accordion>
+
+<Accordion title="ShaderPass and ShaderVariant">
+  `Shader.GetPass(int passIndex)` and `Shader.GetPass(string passName)` retrieve a specific pass by index or name. `Shader.GetPassWithTag(string tag, string? value)` returns the first pass matching a tag key–value pair. These are used internally by the render pipeline but are available for custom pipeline implementations.
+</Accordion>
+
+## Creating Materials at Runtime: Full Example
+
+```csharp
+public class MaterialFactory : MonoBehaviour
+{
+    public override void Awake()
+    {
+        // 1. Load the shader
+        Shader pbr = Application.AssetProvider.LoadAsset<Shader>("Defaults/Standard.shader");
+
+        // 2. Create the material
+        Material rockMat = new Material(pbr);
+        rockMat.Name = "Rock_PBR";
+
+        // 3. Assign textures
+        rockMat.SetTexture("_AlbedoTex",
+            Application.AssetProvider.LoadAsset<Texture2D>("Textures/Rock_A.png"));
+        rockMat.SetTexture("_NormalTex",
+            Application.AssetProvider.LoadAsset<Texture2D>("Textures/Rock_N.png"));
+        rockMat.SetTexture("_SurfaceTex",
+            Application.AssetProvider.LoadAsset<Texture2D>("Textures/Rock_S.png"));
+
+        // 4. Configure scalars
+        rockMat.SetColor("_MainColor", Color.white);
+        rockMat.SetFloat("_AlphaClip", 0.1f);
+
+        // 5. Assign to a renderer
+        MeshRenderer renderer = GetComponent<MeshRenderer>();
+        renderer.Material = rockMat;
+    }
+}
+```
+
+## The Default Material
+
+When no material is assigned to a renderer, Prowl falls back to `Material.GetDefaultMaterial()` — a standard PBR material with a solid white color and no textures:
+
+```csharp
+// Shorthand to get (or lazily create) the shared default material
+Material fallback = Material.GetDefaultMaterial();
+
+// Create a fresh default-shader material without caching
+Material fresh = Material.CreateDefaultMaterial();
+fresh.SetColor("_MainColor", Color.cyan);
+```

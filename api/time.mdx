@@ -1,0 +1,253 @@
+---
+title: 'Time API — Frame Timing and Timestep Control'
+sidebarTitle: 'Time'
+description: 'Reference for Prowl's static Time class: all timing properties including deltaTime, fixedDeltaTime, timeScale, frameCount, and smoothDeltaTime.'
+---
+
+Prowl's `Time` class provides every timing value a game or engine subsystem could need. It is a thin static façade over a stack of `TimeData` objects — `Time.TimeStack` — allowing different engine contexts (e.g., editor playmode vs. a paused-game sub-simulation) to maintain their own independent clocks by pushing and popping `TimeData` instances. In normal gameplay only one `TimeData` lives on the stack: the main game clock, which is updated once per frame by the engine loop. All properties delegate directly to `Time.CurrentTime`, the topmost entry on the stack.
+
+## TimeData Stack
+
+<ResponseField name="TimeStack" type="Stack&lt;TimeData&gt;">
+  The full stack of active time contexts. Push a new `TimeData` instance to begin an independent timing context; pop it to return to the previous one.
+</ResponseField>
+
+<ResponseField name="CurrentTime" type="TimeData">
+  Returns `TimeStack.Peek()` — the active timing context. All static `Time.*` properties read from this object.
+</ResponseField>
+
+---
+
+## Frame Delta
+
+### deltaTime
+
+```csharp
+public static double deltaTime
+```
+
+Time in seconds since the last frame, **scaled** by `timeScale`. Use this for most gameplay movement and physics code.
+
+```csharp
+transform.position += velocity * Time.deltaTime;
+```
+
+### deltaTimeF
+
+```csharp
+public static float deltaTimeF
+```
+
+`(float)deltaTime` — a single-precision convenience property for APIs that require `float`.
+
+### unscaledDeltaTime
+
+```csharp
+public static double unscaledDeltaTime
+```
+
+Time in seconds since the last frame, **not affected** by `timeScale`. Use this for UI animations, timers, or anything that should continue running when the game is paused (`timeScale = 0`).
+
+---
+
+## Accumulated Time
+
+### time
+
+```csharp
+public static double time
+```
+
+Total scaled time elapsed since the engine started (or since the current `TimeData` was reset). Equivalent to the sum of all `deltaTime` values.
+
+### unscaledTotalTime
+
+```csharp
+public static double unscaledTotalTime
+```
+
+Total unscaled time elapsed. Not affected by `timeScale`.
+
+---
+
+## Fixed Timestep
+
+### fixedDeltaTime
+
+```csharp
+public static double fixedDeltaTime
+```
+
+The physics fixed-timestep interval in seconds: `1.0 / PhysicsSetting.Instance.TargetFrameRate`. This property reads `PhysicsSetting` directly; it does not vary frame-to-frame. The default `TargetFrameRate` is `50`, yielding `fixedDeltaTime ≈ 0.02`.
+
+<Note>
+`fixedDeltaTime` is **not** stored in `TimeData`. It is derived from `PhysicsSetting` each time it is accessed.
+</Note>
+
+---
+
+## Frame Count
+
+### frameCount
+
+```csharp
+public static long frameCount
+```
+
+The total number of frames rendered since the current `TimeData` was created. Incremented by one at the start of each `TimeData.Update()` call.
+
+---
+
+## Time Scale
+
+### timeScale
+
+```csharp
+public static double timeScale { get; set; }
+```
+
+Multiplier applied to raw delta time. Default: `1.0`. Set to `0` to pause the game; set to `2` for slow-motion in reverse. Does not affect `unscaledDeltaTime` or `unscaledTotalTime`.
+
+### timeScaleF
+
+```csharp
+public static float timeScaleF { get; set; }
+```
+
+Single-precision version of `timeScale`. Getting returns `(float)timeScale`; setting assigns to `timeScale`.
+
+```csharp
+// Pause the game
+Time.timeScale = 0.0;
+
+// Slow-motion
+Time.timeScale = 0.25;
+
+// Restore normal speed
+Time.timeScale = 1.0;
+```
+
+---
+
+## Smoothed Delta
+
+### smoothDeltaTime
+
+```csharp
+public static double smoothDeltaTime
+```
+
+An exponential moving average of `deltaTime`. Useful for displaying frame rate or for physics/animation that should ignore single-frame spikes. Computed as:
+
+```
+smoothUnscaledDeltaTime = smoothUnscaledDeltaTime + (dt - smoothUnscaledDeltaTime) * timeSmoothFactor
+smoothDeltaTime         = smoothUnscaledDeltaTime * dt
+```
+
+### smoothUnscaledDeltaTime
+
+```csharp
+public static double smoothUnscaledDeltaTime
+```
+
+The smoothed unscaled delta. The intermediate EMA before the scale factor is applied to produce `smoothDeltaTime`.
+
+### timeSmoothFactor
+
+```csharp
+public static double timeSmoothFactor { get; set; }
+```
+
+Blend factor for the EMA. Range `(0, 1]`. Default: `0.25`. Higher values react faster to frame-rate changes; lower values produce a more stable smooth average.
+
+---
+
+## TimeData Class
+
+`TimeData` is the mutable, per-context timing record updated by the engine loop.
+
+```csharp
+public class TimeData
+{
+    public double unscaledDeltaTime;
+    public double unscaledTotalTime;
+    public double deltaTime;
+    public double time;
+    public double smoothUnscaledDeltaTime;
+    public double smoothDeltaTime;
+
+    public long   frameCount;
+    public double timeScale         = 1.0;
+    public float  timeScaleF        => (float)timeScale;
+    public double timeSmoothFactor  = 0.25;
+
+    public void Update();
+}
+```
+
+`Update()` reads from an internal `Stopwatch`, increments `frameCount`, applies `timeScale`, and recalculates the EMA. It is called once per engine frame tick.
+
+---
+
+## Reference Summary
+
+| Property | Type | Scaled? | Description |
+|---|---|---|---|
+| `deltaTime` | `double` | ✅ | Seconds since last frame |
+| `deltaTimeF` | `float` | ✅ | `float` cast of `deltaTime` |
+| `unscaledDeltaTime` | `double` | ❌ | Raw seconds since last frame |
+| `time` | `double` | ✅ | Total elapsed time |
+| `unscaledTotalTime` | `double` | ❌ | Total unscaled elapsed time |
+| `fixedDeltaTime` | `double` | — | `1 / TargetFrameRate` (physics step) |
+| `frameCount` | `long` | — | Frames since context start |
+| `timeScale` | `double` | — | Playback speed multiplier |
+| `smoothDeltaTime` | `double` | ✅ | EMA-smoothed delta time |
+| `smoothUnscaledDeltaTime` | `double` | ❌ | EMA-smoothed unscaled delta |
+| `timeSmoothFactor` | `double` | — | EMA blend coefficient |
+
+---
+
+## Usage Examples
+
+<CodeGroup>
+```csharp Movement
+// Frame-rate independent movement
+transform.position += forward * speed * (float)Time.deltaTime;
+```
+
+```csharp Cooldown Timer
+double cooldownTimer = 0;
+
+void Update()
+{
+    cooldownTimer -= Time.deltaTime;
+    if (Input.GetKeyDown(Key.Space) && cooldownTimer <= 0)
+    {
+        FireProjectile();
+        cooldownTimer = 0.5; // 500 ms cooldown
+    }
+}
+```
+
+```csharp Pause
+// Pause without stopping UI animations
+void TogglePause()
+{
+    Time.timeScale = Time.timeScale == 0.0 ? 1.0 : 0.0;
+}
+
+void UpdateUI()
+{
+    // Uses unscaled time so UI still animates when paused
+    uiAlpha = (float)(Math.Sin(Time.unscaledTotalTime * 2.0) * 0.5 + 0.5);
+}
+```
+
+```csharp FPS Display
+void UpdateHUD()
+{
+    double fps = 1.0 / Time.smoothUnscaledDeltaTime;
+    fpsLabel.Text = $"{fps:F0} FPS";
+}
+```
+</CodeGroup>

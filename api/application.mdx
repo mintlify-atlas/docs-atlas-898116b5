@@ -1,0 +1,241 @@
+---
+title: 'Application API — Prowl Engine Entry Point'
+sidebarTitle: 'Application'
+description: 'Reference for Prowl's static Application class: start the engine loop, handle lifecycle events, query runtime state, and shut down cleanly.'
+---
+
+The `Application` class is the static entry point for every Prowl runtime session. It owns the primary event loop, coordinates initialization of the graphics, audio, and scene subsystems, and exposes the four main lifecycle events — `Initialize`, `Update`, `Render`, and `Quitting` — that the rest of the engine and your game code hook into. Because it is a `static` class, every member is accessed directly without instantiation; a single call to `Application.Run(...)` launches the window, drives the per-frame loop, and tears everything down cleanly when the window closes or `Quit()` is called.
+
+<Note>
+`Application` is **not** thread-safe. All lifecycle events fire on the main thread. Avoid modifying `IsRunning` or `IsPlaying` from worker threads.
+</Note>
+
+---
+
+## Properties
+
+<ResponseField name="IsRunning" type="bool">
+  `true` from the moment the window opens until `AppClose` fires. Set to `false` automatically at shutdown; you can read this field to detect whether the engine loop is still active.
+
+  ```csharp
+  public static bool IsRunning;
+  ```
+</ResponseField>
+
+<ResponseField name="IsPlaying" type="bool">
+  `true` when the game simulation is running. In a standalone build this is always `true`. In the Prowl Editor it is `false` while in edit mode and `true` while the Play button is active.
+
+  ```csharp
+  public static bool IsPlaying = false;
+  ```
+</ResponseField>
+
+<ResponseField name="IsEditor" type="bool">
+  `true` when the current host is the Prowl Editor, `false` in standalone builds. Set once by `Run(...)` and read-only thereafter (private setter).
+
+  ```csharp
+  public static bool IsEditor { get; private set; }
+  ```
+</ResponseField>
+
+<ResponseField name="DataPath" type="string?">
+  Optional root path for application data. Defaults to `null`; the asset pipeline may populate this before calling `Run(...)` so that file-relative asset loading resolves correctly.
+
+  ```csharp
+  public static string? DataPath = null;
+  ```
+</ResponseField>
+
+<ResponseField name="AssetProvider" type="IAssetProvider">
+  The active asset provider injected by the host (editor or game launcher) via `Run(...)`. All asset loading throughout the engine routes through this interface.
+
+  ```csharp
+  public static IAssetProvider AssetProvider;
+  ```
+</ResponseField>
+
+---
+
+## Events
+
+All four events follow the `Action` delegate (no parameters, no return value). Subscribe with `+=` and unsubscribe with `-=`.
+
+<ResponseField name="Initialize" type="event Action">
+  Fires once after the window, graphics device, scene manager, and audio system have all been created. Use this to load your first scene or register global services.
+
+  ```csharp
+  public static event Action Initialize;
+  ```
+
+  <CodeGroup>
+  ```csharp Example
+  Application.Initialize += () =>
+  {
+      SceneManager.LoadScene(myScene);
+  };
+  ```
+  </CodeGroup>
+</ResponseField>
+
+<ResponseField name="Update" type="event Action">
+  Fires once per frame **before** `Render`. The engine's internal `AppUpdate` method pushes a `TimeData` stack frame, invokes audio pooling, then raises this event. Scene update logic and input polling belong here.
+
+  ```csharp
+  public static event Action Update;
+  ```
+</ResponseField>
+
+<ResponseField name="Render" type="event Action">
+  Fires once per frame **after** `Update`, still within the same `TimeData` scope. Camera rendering, post-processing, and UI drawing should subscribe here.
+
+  ```csharp
+  public static event Action Render;
+  ```
+</ResponseField>
+
+<ResponseField name="Quitting" type="event Action">
+  Fires when the application is closing, before graphics and audio are disposed. Use this to flush save data, release unmanaged handles, or log shutdown telemetry.
+
+  ```csharp
+  public static event Action Quitting;
+  ```
+</ResponseField>
+
+---
+
+## Methods
+
+### Run
+
+Starts the full engine loop. This call **blocks** until the window is closed.
+
+```csharp
+public static void Run(string title, int width, int height, IAssetProvider assetProvider, bool editor)
+```
+
+<ParamField path="title" type="string" required>
+  The base window title. The active graphics backend name is appended automatically, e.g. `"My Game — OpenGL"`.
+</ParamField>
+
+<ParamField path="width" type="int" required>
+  Initial client-area width in pixels. The window opens in `Maximized` state, so this value acts as a minimum hint.
+</ParamField>
+
+<ParamField path="height" type="int" required>
+  Initial client-area height in pixels.
+</ParamField>
+
+<ParamField path="assetProvider" type="IAssetProvider" required>
+  The asset provider implementation to use for the lifetime of this session. Stored in `Application.AssetProvider`.
+</ParamField>
+
+<ParamField path="editor" type="bool" required>
+  Pass `true` when the host is the Prowl Editor. Stored in `Application.IsEditor` and influences `Quit()` behavior.
+</ParamField>
+
+<CodeGroup>
+```csharp Standalone Game
+Application.Initialize += OnInit;
+Application.Update     += OnUpdate;
+Application.Render     += OnRender;
+
+Application.Run("Dungeon Crawler", 1920, 1080, new FileAssetProvider("Assets"), editor: false);
+```
+```csharp Editor Host
+Application.Run("Prowl Editor", 1280, 720, new EditorAssetProvider(), editor: true);
+```
+</CodeGroup>
+
+---
+
+### Quit
+
+Requests the application window to close. Has **no effect** when running inside the editor while in play mode; in that case use the editor's Stop button instead.
+
+```csharp
+public static void Quit()
+```
+
+<Note>
+When `Application.IsEditor` is `true` **and** `Application.IsPlaying` is `true`, `Quit()` is a no-op. This prevents scripts from accidentally closing the editor during a play session.
+</Note>
+
+```csharp
+// In a game script:
+if (Input.GetKeyDown(Key.Escape))
+    Application.Quit();
+```
+
+---
+
+### GetBackend
+
+Returns the preferred `GraphicsBackend` for the current operating system. The selection order is:
+
+| Platform | Priority order |
+|----------|---------------|
+| Windows  | OpenGL → Vulkan → Direct3D 11 → OpenGLES |
+| macOS    | Metal → OpenGL → OpenGLES |
+| Linux / Unix | OpenGL → Vulkan → OpenGLES |
+
+```csharp
+public static GraphicsBackend GetBackend()
+```
+
+<ResponseField name="returns" type="GraphicsBackend">
+  The first backend in the platform's preferred list (the engine currently returns index `[0]`).
+</ResponseField>
+
+```csharp
+GraphicsBackend backend = Application.GetBackend();
+Console.WriteLine($"Using backend: {backend}");
+```
+
+---
+
+## Lifecycle Sequence
+
+<Accordion title="Full startup and shutdown flow">
+
+```
+Application.Run(...)
+  │
+  ├─► Screen.Start(...)           // Opens the OS window
+  │     │
+  │     └─► AppInitialize()
+  │           ├─ Graphics.Initialize(...)
+  │           ├─ SceneManager.Initialize()
+  │           ├─ AudioSystem.Initialize()
+  │           ├─ AssemblyManager.Initialize()
+  │           └─ Application.Initialize?.Invoke()   ← your code
+  │
+  └─► [per-frame loop]
+        └─► AppUpdate()
+              ├─ Time.TimeStack.Push(...)
+              ├─ AudioSystem.UpdatePool()
+              ├─ Application.Update?.Invoke()        ← your code
+              ├─ Application.Render?.Invoke()        ← your code
+              └─ Time.TimeStack.Pop()
+
+  [window closes]
+  └─► AppClose()
+        ├─ Application.Quitting?.Invoke()            ← your code
+        ├─ Graphics.Dispose()
+        ├─ Physics.World.Clear()
+        ├─ AudioSystem.Dispose()
+        └─ AssemblyManager.Dispose()
+```
+
+</Accordion>
+
+---
+
+## Tips
+
+<Tip>
+Subscribe to `Application.Initialize` rather than running setup code before `Application.Run(...)`. The graphics device and scene manager are not ready until `Initialize` fires.
+</Tip>
+
+<Warning>
+`Application.IsRunning` is a **field**, not a property — reads and writes are not guaranteed to be atomic on all architectures. Do not use it as a cross-thread synchronization primitive.
+</Warning>

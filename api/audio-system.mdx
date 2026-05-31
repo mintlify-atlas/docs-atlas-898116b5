@@ -1,0 +1,280 @@
+---
+title: 'AudioSystem API — Play and Manage Sounds'
+sidebarTitle: 'AudioSystem'
+description: 'Reference for Prowl's static AudioSystem class: initialize OpenAL, play audio clips, manage audio pools, and control ActiveAudio handles.'
+---
+
+Prowl's audio system is a thin, engine-agnostic wrapper built on top of OpenAL (via `OpenALEngine`), with an automatic fallback to a silent `NullAudioEngine` when no audio hardware is available. The static `AudioSystem` class manages three pools: an `AudioBuffer` cache keyed by `AudioClip` (so the same clip's PCM data is only uploaded to the GPU once), a source pool of reusable `ActiveAudio` objects, and an active-source list from which finished sources are automatically recycled. Sound playback returns an `ActiveAudio` handle, giving callers control over gain, pitch, position, and loop state after the sound starts. A single `AudioListener` component represents the listener in world space; its transform drives spatial audio attenuation and panning.
+
+## Initialization
+
+### Initialize
+
+```csharp
+public static void Initialize()
+```
+
+Creates the audio engine and pre-warms the source pool with two idle `ActiveAudio` sources. Attempts to construct an `OpenALEngine` first. If OpenAL initialisation throws (no audio device, missing drivers), a `NullAudioEngine` is used instead and a `Debug.LogError` is emitted.
+
+```csharp
+// Called automatically by the engine on startup
+AudioSystem.Initialize();
+```
+
+<ResponseField name="Engine" type="AudioEngine">
+  The active audio engine instance. Will be either an `OpenALEngine` or `NullAudioEngine`.
+</ResponseField>
+
+<ResponseField name="Listener" type="AudioListener">
+  The currently registered `AudioListener` component. There should be exactly one active listener per scene.
+</ResponseField>
+
+---
+
+## AudioEngine (abstract)
+
+The backend interface that both `OpenALEngine` and `NullAudioEngine` implement:
+
+```csharp
+public abstract class AudioEngine
+{
+    public abstract void SetListenerPosition(Vector3 position);
+    public abstract void SetListenerVelocity(Vector3 velocity);
+    public abstract void SetListenerOrientation(Vector3 forward, Vector3 up);
+    public abstract ActiveAudio CreateAudioSource();
+    public abstract AudioBuffer CreateAudioBuffer();
+}
+```
+
+<Note>
+You generally do not interact with `AudioEngine` directly. Use the `AudioSystem.PlaySound` overloads and the returned `ActiveAudio` handle instead.
+</Note>
+
+---
+
+## Playing Sounds
+
+### PlaySound overloads
+
+All `PlaySound` variants return an `ActiveAudio` handle. The source is taken from the internal pool; if the pool is empty, a new source is created.
+
+#### From AudioClip (simple)
+
+```csharp
+public static ActiveAudio PlaySound(AudioClip clip)
+public static ActiveAudio PlaySound(AudioClip clip, float volume)
+public static ActiveAudio PlaySound(AudioClip clip, float volume, float pitch)
+```
+
+<ParamField path="clip" type="AudioClip">The audio clip to play.</ParamField>
+<ParamField path="volume" type="float" default="1.0">Gain multiplier. `1.0` = full volume.</ParamField>
+<ParamField path="pitch" type="float" default="1.0">Pitch multiplier. `1.0` = original pitch.</ParamField>
+
+#### From AudioClip with 3D position
+
+```csharp
+public static ActiveAudio PlaySound(
+    AudioClip clip,
+    float volume,
+    float pitch,
+    Vector3 position,
+    AudioPositionKind positionKind)
+```
+
+<ParamField path="position" type="Vector3">
+  World-space position of the sound source for 3D attenuation.
+</ParamField>
+<ParamField path="positionKind" type="AudioPositionKind">
+  `AbsoluteWorld` — position is in world space; distance attenuation and panning applied.  
+  `ListenerRelative` — position is relative to the listener; use for 2D / UI sounds.
+</ParamField>
+
+#### From AudioBuffer (full control)
+
+```csharp
+public static ActiveAudio PlaySound(
+    AudioBuffer buffer,
+    float volume,
+    float pitch,
+    Vector3 position,
+    AudioPositionKind positionKind,
+    float maxDistance)
+```
+
+<ParamField path="buffer" type="AudioBuffer">Pre-fetched audio buffer (from `GetAudioBuffer`).</ParamField>
+<ParamField path="maxDistance" type="float">Maximum distance in world units at which the sound is audible.</ParamField>
+
+```csharp
+// Simple 2D sound
+AudioSystem.PlaySound(explosionClip);
+
+// Pitched variation
+AudioSystem.PlaySound(footstepClip, volume: 0.8f, pitch: Random.Range(0.9f, 1.1f));
+
+// 3D positional sound
+AudioSystem.PlaySound(
+    clip: ambienceClip,
+    volume: 1.0f,
+    pitch: 1.0f,
+    position: emitterTransform.position,
+    positionKind: AudioPositionKind.AbsoluteWorld);
+```
+
+---
+
+## AudioBuffer Cache
+
+### GetAudioBuffer
+
+```csharp
+public static AudioBuffer GetAudioBuffer(AudioClip clip)
+```
+
+Returns a cached `AudioBuffer` for `clip`, uploading the PCM data to the audio engine if it has not been uploaded before. The internal cache (`Dictionary<AudioClip, AudioBuffer>`) ensures each clip is only uploaded once.
+
+<ParamField path="clip" type="AudioClip">The clip whose buffer to retrieve.</ParamField>
+
+<ResponseField name="returns" type="AudioBuffer">
+  The GPU-side audio buffer ready for playback.
+</ResponseField>
+
+---
+
+## ActiveAudio Handle
+
+`ActiveAudio` is an abstract class returned by `PlaySound`. It represents an active or pooled audio source and lets you modify playback after the sound has started.
+
+```csharp
+public abstract class ActiveAudio : IDisposable
+```
+
+### Properties
+
+<ResponseField name="Gain" type="float">
+  Volume multiplier. Get or set at any time during playback.
+</ResponseField>
+<ResponseField name="Pitch" type="float">
+  Pitch multiplier. Changing this mid-playback re-pitches the sound in real time.
+</ResponseField>
+<ResponseField name="MaxDistance" type="float">
+  Distance in world units at which the source is fully attenuated.
+</ResponseField>
+<ResponseField name="Looping" type="bool">
+  When `true`, the source loops automatically when it reaches the end.
+</ResponseField>
+<ResponseField name="Position" type="Vector3">
+  World-space or listener-relative position of the source.
+</ResponseField>
+<ResponseField name="Direction" type="Vector3">
+  Directional cone axis for directional audio sources.
+</ResponseField>
+<ResponseField name="PositionKind" type="AudioPositionKind">
+  `AbsoluteWorld` or `ListenerRelative` — controls how `Position` is interpreted.
+</ResponseField>
+<ResponseField name="IsPlaying" type="bool">
+  `true` when the source is actively playing.
+</ResponseField>
+<ResponseField name="PlaybackPosition" type="float">
+  Normalised playback position in `[0, 1]`. Setting this seeks the source. When `PlaybackPosition >= 1` and `Looping` is `false`, the source is considered finished and returned to the pool.
+</ResponseField>
+
+### Methods
+
+#### Play
+
+```csharp
+public abstract void Play(AudioBuffer buffer)
+```
+
+Begins playback of `buffer` from the start. The source must be acquired from the pool before calling this.
+
+#### Stop
+
+```csharp
+public abstract void Stop()
+```
+
+Stops playback immediately. The source remains in the active list until `UpdatePool` recycles it.
+
+#### Dispose
+
+```csharp
+public abstract void Dispose()
+```
+
+Releases the underlying OpenAL source. Sources managed by `AudioSystem` are disposed automatically; only call this if you created a source manually.
+
+---
+
+## Listener Registration
+
+### RegisterListener / UnregisterListener
+
+```csharp
+public static void RegisterListener(AudioListener audioListener)
+public static void UnregisterListener(AudioListener audioListener)
+```
+
+Called by `AudioListener` component lifecycle methods. Only one listener is supported per scene. Registering a second listener emits a `Debug.LogWarning`.
+
+### ListenerTransformChanged
+
+```csharp
+public static void ListenerTransformChanged(Transform t, Vector3 lastPost)
+```
+
+Called by `AudioListener` whenever its transform changes. Updates the audio engine's listener position, velocity (`t.position - lastPost`), and orientation (`t.forward`, `t.up`).
+
+---
+
+## Pool Management
+
+### UpdatePool
+
+```csharp
+public static void UpdatePool()
+```
+
+Scans the active-source list and moves any stopped or finished sources back to the idle pool. Called automatically by the engine each frame.
+
+---
+
+## Dispose
+
+```csharp
+public static void Dispose()
+```
+
+Stops all active and pooled sources, disposes all cached `AudioBuffer` objects, and disposes the `AudioEngine` (if it is `IDisposable`). Called automatically on engine shutdown.
+
+---
+
+## Usage Example
+
+<CodeGroup>
+```csharp One-shot sound effect
+// Play a 2D sound effect
+ActiveAudio source = AudioSystem.PlaySound(shootClip, volume: 0.9f, pitch: 1.05f);
+// No further action needed — the source is returned to the pool automatically
+```
+
+```csharp Positional ambient sound
+ActiveAudio ambient = AudioSystem.PlaySound(
+    clip: windClip,
+    volume: 0.6f,
+    pitch: 1.0f,
+    position: windEmitter.position,
+    positionKind: AudioPositionKind.AbsoluteWorld);
+
+ambient.Looping = true;
+ambient.MaxDistance = 30f;
+```
+
+```csharp Stop a looping sound
+ActiveAudio music = AudioSystem.PlaySound(bgmClip, volume: 1.0f);
+music.Looping = true;
+
+// Later...
+music.Stop();
+```
+</CodeGroup>

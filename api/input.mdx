@@ -1,0 +1,289 @@
+---
+title: 'Input API — Keyboard, Mouse, and Handlers'
+sidebarTitle: 'Input'
+description: 'Reference for Prowl's static Input class: query keyboard and mouse state, control cursor visibility, access clipboard, and manage input handler stack.'
+---
+
+Prowl's input system is layered around a stack of `IInputHandler` implementations. The `Input` static class simply delegates every query to the handler on top of the stack — `Input.Current`. This design lets the editor, the game viewport, and UI subsystems push their own handlers to intercept or block input without affecting each other. The default game handler is `DefaultInputHandler`, which bridges Veldrid's raw input events into Prowl's `Key` and `MouseButton` enums. All keyboard and mouse state queries follow a three-state model: **held** (`GetKey`), **pressed this frame** (`GetKeyDown`), and **released this frame** (`GetKeyUp`).
+
+## Handler Stack
+
+<ResponseField name="Handlers" type="Stack&lt;IInputHandler&gt;">
+  The full stack of active input handlers. The topmost handler receives all queries.
+</ResponseField>
+
+<ResponseField name="Current" type="IInputHandler">
+  Returns `Handlers.Peek()` — the active (topmost) handler.
+</ResponseField>
+
+### PushHandler
+
+```csharp
+public static void PushHandler(IInputHandler handler)
+```
+
+Pushes a new handler onto the stack. All subsequent `Input.*` calls will be routed to this handler.
+
+<ParamField path="handler" type="IInputHandler">
+  The handler to activate.
+</ParamField>
+
+### PopHandler
+
+```csharp
+public static void PopHandler()
+```
+
+Removes the topmost handler, restoring the previous one.
+
+```csharp
+// Temporarily capture input for a UI modal
+var uiHandler = new UIInputHandler();
+Input.PushHandler(uiHandler);
+// ... modal is shown ...
+Input.PopHandler();
+```
+
+---
+
+## Keyboard
+
+### GetKey
+
+```csharp
+public static bool GetKey(Key key)
+```
+
+Returns `true` every frame the key is held down.
+
+### GetKeyDown
+
+```csharp
+public static bool GetKeyDown(Key key)
+```
+
+Returns `true` only on the frame the key was first pressed.
+
+### GetKeyUp
+
+```csharp
+public static bool GetKeyUp(Key key)
+```
+
+Returns `true` only on the frame the key was released.
+
+```csharp
+// Hold to sprint
+if (Input.GetKey(Key.LeftShift))
+    speed *= 2f;
+
+// Toggle menu on press
+if (Input.GetKeyDown(Key.Escape))
+    ToggleMenu();
+```
+
+### Additional keyboard properties
+
+<ResponseField name="InputString" type="IReadOnlyList&lt;char&gt;">
+  Characters typed this frame, in order. Useful for text-input fields.
+</ResponseField>
+
+---
+
+## Mouse Buttons
+
+### GetMouseButton
+
+```csharp
+public static bool GetMouseButton(MouseButton button)
+```
+
+Returns `true` every frame the button is held.
+
+### GetMouseButtonDown
+
+```csharp
+public static bool GetMouseButtonDown(MouseButton button)
+```
+
+Returns `true` only on the frame the button was first pressed.
+
+### GetMouseButtonUp
+
+```csharp
+public static bool GetMouseButtonUp(MouseButton button)
+```
+
+Returns `true` only on the frame the button was released.
+
+```csharp
+if (Input.GetMouseButtonDown(MouseButton.Left))
+    FireWeapon();
+```
+
+---
+
+## Mouse Position and Movement
+
+<ResponseField name="MousePosition" type="Vector2Int">
+  Gets or sets the cursor position in screen pixels (origin at top-left).
+</ResponseField>
+
+<ResponseField name="PrevMousePosition" type="Vector2Int">
+  The cursor position at the end of the previous frame.
+</ResponseField>
+
+<ResponseField name="MouseDelta" type="Vector2">
+  Raw cursor movement in pixels since the last frame. Does not depend on cursor position when `CursorLocked` is `true`.
+</ResponseField>
+
+<ResponseField name="MouseWheelDelta" type="float">
+  Scroll-wheel movement this frame. Positive values indicate scrolling up/towards the user.
+</ResponseField>
+
+```csharp
+// First-person look
+Vector2 look = Input.MouseDelta * sensitivity * (float)Time.deltaTime;
+transform.Rotate(new Vector3(-look.y, look.x, 0));
+```
+
+---
+
+## Cursor Control
+
+<ResponseField name="CursorVisible" type="bool">
+  Gets or sets cursor visibility. When `false` the OS cursor is hidden.
+</ResponseField>
+
+<ResponseField name="CursorLocked" type="bool">
+  Gets or sets cursor lock state. When `true` the cursor is confined to the window and `MouseDelta` reports raw device movement.
+</ResponseField>
+
+```csharp
+// Lock cursor for FPS-style controls
+Input.CursorVisible = false;
+Input.CursorLocked  = true;
+```
+
+---
+
+## Clipboard
+
+<ResponseField name="Clipboard" type="string">
+  Gets or sets the system clipboard text contents. Delegates to the current handler's clipboard implementation.
+</ResponseField>
+
+---
+
+## Events
+
+```csharp
+public static event Action<Key, bool> OnKeyEvent
+```
+Fires on key press (`bool = true`) and release (`bool = false`).
+
+```csharp
+public static event Action<MouseButton, double, double, bool, bool> OnMouseEvent
+```
+Fires on mouse button events. Parameters: `(button, x, y, pressed, doubleClick)`.
+
+---
+
+## IInputHandler Interface
+
+Implement `IInputHandler` to create a custom input source (e.g., gamepad, virtual keyboard, remote input).
+
+```csharp
+public interface IInputHandler
+{
+    string Clipboard { get; set; }
+    bool IsAnyKeyDown { get; }
+    IReadOnlyList<char> InputString { get; set; }
+
+    Vector2   MouseDelta        { get; }
+    Vector2Int MousePosition    { get; set; }
+    float      MouseWheelDelta  { get; }
+    Vector2Int PrevMousePosition { get; }
+
+    bool CursorVisible { get; set; }
+    bool CursorLocked  { get; set; }
+
+    event Action<Key, bool> OnKeyEvent;
+    event Action<MouseButton, double, double, bool, bool> OnMouseEvent;
+
+    bool GetKey(Key key);
+    bool GetKeyDown(Key key);
+    bool GetKeyUp(Key key);
+    bool GetMouseButton(MouseButton button);
+    bool GetMouseButtonDown(MouseButton button);
+    bool GetMouseButtonUp(MouseButton button);
+}
+```
+
+---
+
+## Key Enum
+
+`Key` maps directly to Veldrid's `Key` enum, covering the full SDL2 keycode set. Common values:
+
+<Accordion title="Letters (A–Z)">
+  `Key.A` through `Key.Z`
+</Accordion>
+
+<Accordion title="Numbers (0–9 and numpad)">
+  `Key.Num0`–`Key.Num9`, `Key.Keypad0`–`Key.Keypad9`
+</Accordion>
+
+<Accordion title="Function keys">
+  `Key.F1`–`Key.F24`
+</Accordion>
+
+<Accordion title="Navigation and editing">
+
+| Value | Description |
+|---|---|
+| `Key.Return` | Enter / Return |
+| `Key.Escape` | Escape |
+| `Key.Backspace` | Backspace |
+| `Key.Tab` | Tab |
+| `Key.Space` | Spacebar |
+| `Key.Delete` | Delete |
+| `Key.Insert` | Insert |
+| `Key.Home` | Home |
+| `Key.End` | End |
+| `Key.PageUp` | Page Up |
+| `Key.PageDown` | Page Down |
+| `Key.Up` | Arrow Up |
+| `Key.Down` | Arrow Down |
+| `Key.Left` | Arrow Left |
+| `Key.Right` | Arrow Right |
+
+</Accordion>
+
+<Accordion title="Modifiers">
+
+| Value | Description |
+|---|---|
+| `Key.LeftShift` | Left Shift |
+| `Key.RightShift` | Right Shift |
+| `Key.LeftControl` | Left Control |
+| `Key.RightControl` | Right Control |
+| `Key.LeftAlt` | Left Alt |
+| `Key.RightAlt` | Right Alt |
+| `Key.LeftGui` | Left Super / Windows key |
+| `Key.RightGui` | Right Super / Windows key |
+| `Key.CapsLock` | Caps Lock |
+
+</Accordion>
+
+---
+
+## MouseButton Enum
+
+| Value | Description |
+|---|---|
+| `MouseButton.Left` | Primary mouse button |
+| `MouseButton.Right` | Secondary mouse button |
+| `MouseButton.Middle` | Middle / scroll-wheel button |
+| `MouseButton.Button1`–`Button9` | Extra mouse buttons (side buttons, etc.) |
+| `MouseButton.Unknown` | Unrecognised button (`-1`) |

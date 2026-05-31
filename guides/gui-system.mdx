@@ -1,0 +1,329 @@
+---
+title: 'Immediate-Mode GUI System in Prowl Engine'
+sidebarTitle: 'GUI System'
+description: 'Build runtime HUDs and editor tools using Prowl's custom immediate-mode GUI system: layout nodes, widgets, input, 2D/3D drawing, and animation.'
+---
+
+Prowl ships a fully custom immediate-mode GUI system — not Dear ImGui, not Unity's UGUI, but a purpose-built renderer that powers both the editor itself and runtime in-game HUDs. Every frame you describe what you want drawn by calling methods on the `Gui` class; the system handles layout, clipping, z-ordering, interactability, and animated transitions automatically. Because the same `Gui` instance drives the editor windows, your game HUD, and the property inspectors, any widget you build for a runtime overlay can be re-used inside an `EditorWindow` without changes.
+
+## Entry Points
+
+### The `Gui` Class
+
+`Gui` is a partial class spread across several files that together provide:
+
+- **Layout** — a flexbox-inspired tree of `LayoutNode` objects
+- **Drawing** — `Draw2D` (rectangles, text, images) and `Draw3D` (gizmos, world-space lines)
+- **Input** — pointer position, button states, keyboard keys, double-click, and drag-and-drop
+- **Interaction** — hover, active, and focus tracking per node
+- **Animation** — `AnimateBool` helpers for smooth transitions
+- **State storage** — per-node and global key-value storage that persists across frames
+
+The currently active `Gui` for the current scope is always available as `Gui.ActiveGUI`.
+
+### GuiLayer Component *(Runtime)*
+
+Attach a `GuiLayer` component to a Camera GameObject to render a runtime GUI on top of that camera's output. The engine calls your `OnGUI` override each frame and passes the active `Gui` instance.
+
+```csharp
+public class PlayerHUD : MonoBehaviour
+{
+    public override void OnGUI(Gui gui)
+    {
+        // All GUI calls go here
+    }
+}
+```
+
+### Editor Tools
+
+For editor panels, override `OnInspectorGUI` in a `ScriptedEditor` or implement an `EditorWindow`. The `gui` field is already set up for you:
+
+```csharp
+[CustomEditor(typeof(MyComponent))]
+public class MyComponentEditor : ScriptedEditor
+{
+    public override void OnInspectorGUI(EditorGUI.FieldChanges changes)
+    {
+        gui.CurrentNode.Layout(LayoutType.Column);
+        // draw inspector widgets here
+    }
+}
+```
+
+## Layout System
+
+Every GUI element lives inside a `LayoutNode`. Nodes form a tree; each node can flow its children horizontally (`LayoutType.Row`) or vertically (`LayoutType.Column`), similar to CSS flexbox. You open a node with `gui.Node(id)`, chain builder methods to set dimensions, then call `.Enter()` in a `using` block to make it current.
+
+```csharp
+public override void OnGUI(Gui gui)
+{
+    // A column panel 200 px wide, 100 % of screen height
+    using (gui.Node("Panel")
+        .Left(10).Top(10)
+        .Width(200).Height(Size.Percentage(1f))
+        .Layout(LayoutType.Column)
+        .Spacing(4)
+        .Padding(8)
+        .Enter())
+    {
+        // child nodes go here
+    }
+}
+```
+
+### Key LayoutNode Builder Methods
+
+| Method | Purpose |
+|---|---|
+| `.Width(Size)` / `.Height(Size)` | Fixed pixel size |
+| `.ExpandWidth()` / `.ExpandHeight()` | 100 % of parent |
+| `.Left(Offset)` / `.Top(Offset)` | Absolute or relative position |
+| `.Layout(LayoutType)` | `Row`, `Column`, or `None` |
+| `.Spacing(Size)` | Gap between children |
+| `.Padding(double)` | Inner padding on all sides |
+| `.Clip()` | Enable scissor clipping for this node |
+| `.Scroll()` | Add a scrollable region |
+| `.FitContent()` | Shrink-wrap to children |
+| `.IgnoreLayout()` | Remove from the automatic flow |
+
+`Size` and `Offset` accept plain pixel values or percentage helpers:
+
+```csharp
+Size.Percentage(0.5f)          // 50 % of parent
+Size.Percentage(1f, -20)       // 100 % minus 20 px
+```
+
+## Basic Widgets
+
+### Text
+
+```csharp
+gui.TextNode("title", "Hello, Prowl!").ExpandWidth().Height(30);
+```
+
+### Buttons
+
+Check interaction using `gui.IsNodePressed()` after entering the node:
+
+```csharp
+using (gui.Node("StartBtn")
+    .Width(120).Height(36)
+    .Enter())
+{
+    bool hovered = gui.IsNodeHovered();
+    Color bg = hovered ? Color.blue * 0.6f : Color.blue * 0.4f;
+    gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, bg, 4f);
+    gui.Draw2D.DrawText("Start Game", gui.CurrentNode.LayoutData.InnerRect, Color.white);
+
+    if (gui.IsNodePressed())
+        StartGame();
+}
+```
+
+### Input Fields
+
+```csharp
+string playerName = "";
+
+gui.InputField(
+    ID:       "NameField",
+    value:    ref playerName,
+    maxLength: 32,
+    flags:    InputFieldFlags.None,
+    x:        0, y: 0,
+    width:    Size.Percentage(1f)
+);
+```
+
+`InputFieldFlags` controls behaviour:
+
+```csharp
+public enum InputFieldFlags : uint
+{
+    None           = 0,
+    NumbersOnly    = 1 << 0,
+    Multiline      = 1 << 1,
+    AllowTab       = 1 << 2,
+    EnterReturnsTrue = 1 << 5,
+    Readonly       = 1 << 7,
+}
+```
+
+### Combo / Dropdown
+
+```csharp
+int selectedIndex = 0;
+string[] options = ["Easy", "Normal", "Hard"];
+
+gui.Combo(
+    ID:        "DiffCombo",
+    popupName: "DiffPopup",
+    itemIndex: ref selectedIndex,
+    items:     options,
+    x: 0, y: 0,
+    width: 160, height: 30
+);
+```
+
+## Drawing
+
+### GuiDraw2D
+
+Access via `gui.Draw2D`. All coordinates are in the GUI's local pixel space (top-left origin).
+
+```csharp
+Rect nodeRect = gui.CurrentNode.LayoutData.Rect;
+Rect innerRect = gui.CurrentNode.LayoutData.InnerRect;
+
+// Filled rectangle
+gui.Draw2D.DrawRectFilled(nodeRect, new Color(0.1f, 0.1f, 0.1f, 0.9f), roundness: 6f);
+
+// Outlined rectangle
+gui.Draw2D.DrawRect(nodeRect, Color.white * 0.5f, thickness: 1f, roundness: 6f);
+
+// Text
+gui.Draw2D.DrawText("Score: 999", innerRect, Color.yellow);
+
+// Push a clip rect so children don't draw outside their panel
+gui.Draw2D.PushClip(nodeRect);
+// ... draw children ...
+gui.Draw2D.PopClip();
+```
+
+### GuiDraw3D
+
+`gui.Draw3D` lets you draw world-space geometry that is composited on top of the 3D scene — useful for custom gizmos and debug overlays in editor tools.
+
+```csharp
+gui.Draw3D.DrawLine(Vector3.zero, Vector3.up * 5f, Color.green);
+```
+
+### UIDrawList
+
+`GuiDraw2D` routes all calls through a per-Z-index `UIDrawList`, which batches vertices just like Dear ImGui's `ImDrawList`. You can access it directly for custom low-level rendering:
+
+```csharp
+UIDrawList drawList = gui.Draw2D.DrawList;
+drawList.AddRectFilled(min, max, color, rounding: 4f);
+```
+
+## Input Handling
+
+Prowl's GUI input system tracks pointer position, button state, and keyboard keys per frame. All queries go through the `Gui` instance rather than `Input` to respect GUI focus and z-ordering.
+
+```csharp
+// Pointer
+Vector2 pos = gui.PointerPos;
+bool leftDown = gui.IsPointerDown(MouseButton.Left);
+bool leftClick = gui.IsPointerClick(MouseButton.Left);
+bool doubleClick = gui.IsPointerDoubleClick(MouseButton.Left);
+Vector2 delta = gui.PointerDelta;
+float scroll = gui.PointerWheel;
+
+// Keyboard
+bool enterPressed = gui.IsKeyClick(Key.Enter);
+bool shiftHeld = gui.IsKeyDown(Key.ShiftLeft);
+```
+
+### Interactables
+
+For precise hover and click tracking attached to a specific node, use `GetInteractable()`:
+
+```csharp
+using (gui.Node("MyWidget").Width(80).Height(30).Enter())
+{
+    Interactable interact = gui.GetInteractable();
+
+    if (interact.IsHovered())
+        gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.yellow * 0.3f);
+
+    if (interact.TakeFocus()) // true on the click frame
+        OnWidgetClicked();
+}
+```
+
+`Interactable` properties:
+
+| Member | Description |
+|---|---|
+| `IsHovered()` | Pointer is over this node and not blocked |
+| `IsActive()` | Left button held on this node |
+| `IsFocused()` | This node took focus via `TakeFocus()` |
+| `TakeFocus()` | Returns `true` on the click/release frame |
+
+### Drag and Drop
+
+```csharp
+// Source
+if (gui.DragDrop_Source(out LayoutNode? dragNode))
+{
+    using (dragNode!.Width(60).Height(20).Enter())
+        gui.Draw2D.DrawText("Dragging", gui.CurrentNode.LayoutData.InnerRect);
+}
+
+// Target
+using (gui.Node("DropZone").Width(100).Height(100).Enter())
+{
+    gui.GetInteractable();
+    if (gui.DragDrop_Accept())
+        OnItemDropped();
+}
+```
+
+## GUI Animation
+
+`gui.AnimateBool` smoothly interpolates a `float` between `0` and `1` based on a `bool` state, persisting the animated value across frames using the current node's ID.
+
+```csharp
+using (gui.Node("FadePanel").Width(200).Height(100).Enter())
+{
+    bool isVisible = _panelOpen;
+    float alpha = gui.AnimateBool(isVisible, duration: 0.2f, EaseType.QuadOut);
+
+    Color panelColor = new Color(0.2f, 0.2f, 0.2f, alpha);
+    gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, panelColor);
+}
+```
+
+Available `EaseType` values include `Linear`, `SineIn/Out`, `QuadIn/Out`, `CubicIn/Out`, `ElasticOut`, `BounceOut`, and more — covering all standard CSS timing functions.
+
+## Z-Ordering
+
+Use `gui.SetZIndex(int)` to draw a node on top of everything else — essential for popups and tooltips:
+
+```csharp
+using (gui.Node("Popup").IgnoreLayout().Left(mouseX).Top(mouseY).Width(150).Height(80).Enter())
+{
+    gui.SetZIndex(1000);
+    gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.black * 0.95f, 4f);
+    gui.Draw2D.DrawText("Context menu", gui.CurrentNode.LayoutData.InnerRect);
+    gui.BlockInteractables(gui.CurrentNode.LayoutData.Rect);
+}
+```
+
+## State Storage
+
+Store per-node values that survive across frames without declaring member fields:
+
+```csharp
+using (gui.Node("Accordion").ExpandWidth().Height(30).Enter())
+{
+    bool open = gui.GetNodeStorage<bool>("open");
+    if (gui.IsNodePressed())
+    {
+        open = !open;
+        gui.SetNodeStorage("open", open);
+    }
+    gui.Draw2D.DrawText(open ? "▼ Section" : "▶ Section",
+        gui.CurrentNode.LayoutData.InnerRect);
+}
+```
+
+## Editor Gizmos
+
+The editor uses the same `GuiDraw3D` pipeline to render transform handles. `TransformGizmo` and `ViewManipulatorGizmo` are available in `Prowl.Runtime.GUI.Widgets.Gizmo` and are powered by the same `Gui` machinery — you can use them as reference when building custom scene handles.
+
+<Note>
+The GUI system does not use Dear ImGui. It is a standalone implementation that shares design inspiration but has its own layout engine, draw list, and input model. Do not mix `ImGui.*` calls into Prowl GUI code.
+</Note>

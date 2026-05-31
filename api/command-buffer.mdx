@@ -1,0 +1,348 @@
+---
+title: 'CommandBuffer API — GPU Command Recording'
+sidebarTitle: 'CommandBuffer'
+description: 'Record and submit GPU rendering commands in Prowl using CommandBuffer and CommandBufferPool, wrapping Veldrid command lists with higher-level helpers.'
+---
+
+`CommandBuffer` is Prowl's high-level wrapper around a Veldrid `CommandList`. Instead of interacting with the low-level Veldrid API directly, you record rendering operations into a `CommandBuffer` — setting render targets, binding materials, uploading shader properties, issuing draw calls — and then submit the entire recorded sequence to the GPU in one call. `CommandBufferPool` prevents allocation pressure by recycling buffer objects across frames. Together these types form the backbone of every render pass in the engine, from the default forward pipeline to user-authored post-processing effects.
+
+## CommandBufferPool
+
+The pool is the preferred way to obtain a `CommandBuffer`. It recycles used buffers to avoid per-frame allocations.
+
+### Get
+
+```csharp
+public static CommandBuffer Get()
+public static CommandBuffer Get(string name)
+```
+
+Returns a clean, recording-ready `CommandBuffer`. If a pooled buffer is available it is reused; otherwise a new one is created.
+
+<ParamField path="name" type="string" default="&quot;New Command Buffer&quot;">
+  A debug name attached to the underlying Veldrid `CommandList`. Useful for GPU capture tools.
+</ParamField>
+
+<ResponseField name="returns" type="CommandBuffer">
+  A `CommandBuffer` whose `BeginRecording()` has already been called. Ready to accept commands immediately.
+</ResponseField>
+
+### Release
+
+```csharp
+public static void Release(CommandBuffer buffer)
+```
+
+Clears the buffer (ends recording, dequeues all pending resource disposals) and returns it to the pool for future reuse. Always call this after `Graphics.SubmitCommandBuffer`.
+
+<ParamField path="buffer" type="CommandBuffer">
+  The buffer to return. Must not be used after this call.
+</ParamField>
+
+## Typical Usage Pattern
+
+```csharp
+// 1. Acquire from pool
+CommandBuffer cmd = CommandBufferPool.Get("My Render Pass");
+
+// 2. Record commands
+cmd.SetRenderTarget(myRenderTexture);
+cmd.ClearRenderTarget(true, true, Color.black);
+cmd.SetMaterial(myMaterial, 0);
+cmd.SetMatrix("_Model", modelMatrix.ToFloat());
+cmd.DrawSingle(meshDrawData);
+
+// 3. Submit to GPU
+Graphics.SubmitCommandBuffer(cmd);
+
+// 4. Release back to pool
+CommandBufferPool.Release(cmd);
+```
+
+## CommandBuffer Reference
+
+### Construction
+
+```csharp
+public CommandBuffer()
+public CommandBuffer(string name)
+```
+
+Creates a new command buffer and immediately begins recording. Prefer `CommandBufferPool.Get()` over direct construction.
+
+<ResponseField name="Name" type="string">
+  Get or set the debug name of the underlying command list.
+</ResponseField>
+
+---
+
+### Render Targets
+
+#### SetRenderTarget
+
+```csharp
+public void SetRenderTarget(Framebuffer framebuffer)
+public void SetRenderTarget(RenderTexture renderTarget)
+```
+
+Sets the active framebuffer for subsequent draw calls.
+
+<ParamField path="framebuffer" type="Framebuffer">
+  A Veldrid `Framebuffer` to render into.
+</ParamField>
+<ParamField path="renderTarget" type="RenderTexture">
+  A Prowl `RenderTexture`; its `Framebuffer` property is used internally.
+</ParamField>
+
+#### ClearRenderTarget
+
+```csharp
+public void ClearRenderTarget(
+    bool clearDepth,
+    bool clearColor,
+    Color backgroundColor,
+    int attachment = -1,
+    float depth = 1,
+    byte stencil = 0)
+```
+
+Clears the depth, colour, or both buffers of the active framebuffer.
+
+<ParamField path="clearDepth" type="bool">
+  When `true`, clears the depth/stencil buffer to `depth`/`stencil`.
+</ParamField>
+<ParamField path="clearColor" type="bool">
+  When `true`, clears colour attachments to `backgroundColor`.
+</ParamField>
+<ParamField path="attachment" type="int" default="-1">
+  Index of the colour attachment to clear. Pass `-1` to clear all colour attachments.
+</ParamField>
+
+---
+
+### Materials and Passes
+
+#### SetMaterial
+
+```csharp
+public void SetMaterial(Material material, int pass = 0)
+```
+
+Binds a material's shader pass and applies its property state to subsequent draw calls.
+
+<ParamField path="material" type="Material">
+  The material to bind.
+</ParamField>
+<ParamField path="pass" type="int" default="0">
+  The shader pass index to activate.
+</ParamField>
+
+#### SetPass
+
+```csharp
+public void SetPass(ShaderPass pass)
+```
+
+Directly activates a `ShaderPass` without going through a `Material`.
+
+#### SetKeyword
+
+```csharp
+public void SetKeyword(string keyword, string value)
+```
+
+Sets a shader keyword variant selector. Triggers a pipeline variant lookup so subsequent draw calls use the matching compiled variant.
+
+<ParamField path="keyword" type="string">
+  The keyword name (e.g. `"_NORMALMAP"`).
+</ParamField>
+<ParamField path="value" type="string">
+  The keyword value (e.g. `"ON"` or `"OFF"`).
+</ParamField>
+
+---
+
+### Drawing
+
+#### DrawSingle
+
+```csharp
+public void DrawSingle(IGeometryDrawData drawData, int indexCount = -1, uint indexOffset = 0)
+```
+
+Binds geometry draw data and issues a single indexed draw call.
+
+<ParamField path="drawData" type="IGeometryDrawData">
+  Geometry to draw (e.g., a `Mesh` which implements this interface).
+</ParamField>
+<ParamField path="indexCount" type="int" default="-1">
+  Number of indices to draw. Pass `-1` to draw all indices in `drawData`.
+</ParamField>
+<ParamField path="indexOffset" type="uint" default="0">
+  Offset into the index buffer.
+</ParamField>
+
+#### DrawIndexed
+
+```csharp
+public void DrawIndexed(uint indexCount, uint indexOffset, uint instanceCount, uint instanceStart, int vertexOffset)
+```
+
+Issues an indexed draw call directly. Requires `SetDrawData` to have been called beforehand.
+
+#### DrawIndirect / DrawIndexedIndirect
+
+```csharp
+public void DrawIndirect(GraphicsBuffer buffer, uint offset, uint drawCount, uint stride)
+public void DrawIndexedIndirect(GraphicsBuffer buffer, uint offset, uint drawCount, uint stride)
+```
+
+Issues GPU-driven indirect draw calls sourcing arguments from a `GraphicsBuffer`.
+
+---
+
+### Blit Operations
+
+#### Blit (Texture2D → Framebuffer)
+
+```csharp
+public void Blit(Texture2D source, Framebuffer target, int pass = 0)
+public void Blit(Texture2D source, Framebuffer target, Material mat, int pass = 0)
+```
+
+Blits a `Texture2D` to a `Framebuffer` using a full-screen quad.
+
+#### Blit (RenderTexture → Framebuffer)
+
+```csharp
+public void Blit(RenderTexture source, Framebuffer target, int pass = 0)
+public void Blit(RenderTexture source, Framebuffer target, Material mat, int pass = 0)
+```
+
+Blits the first colour buffer of a `RenderTexture`.
+
+---
+
+### Shader Properties
+
+Set scalar, vector, matrix, texture, and buffer values that are uploaded to shaders at draw time.
+
+```csharp
+public void SetTexture(string name, Texture texture)
+public void SetInt(string name, int value)
+public void SetFloat(string name, float value)
+public void SetVector(string name, System.Numerics.Vector2 value)
+public void SetVector(string name, System.Numerics.Vector3 value)
+public void SetVector(string name, System.Numerics.Vector4 value)
+public void SetColor(string name, Color value)
+public void SetMatrix(string name, System.Numerics.Matrix4x4 value)
+public void SetBuffer(string name, GraphicsBuffer buffer, int start = 0, int length = -1)
+public void SetRawBuffer(string name, DeviceBuffer buffer, int start = 0, int length = -1)
+```
+
+#### ApplyPropertyState
+
+```csharp
+public void ApplyPropertyState(PropertyState state)
+```
+
+Merges an entire `PropertyState` (a map of typed shader properties) into the buffer's active property state, overriding any previously set values with the same names.
+
+---
+
+### Viewports and Scissors
+
+```csharp
+public void SetViewport(uint viewport, int x, int y, int width, int height, float z, float depth)
+public void SetViewports(int x, int y, int width, int height, float z, float depth)
+public void SetFullViewport(uint index = 0)
+public void SetFullViewports()
+
+public void SetScissorRect(uint index, uint x, uint y, uint width, uint height)
+public void SetScissorRects(uint x, uint y, uint width, uint height)
+public void SetFullScissorRect(uint index)
+public void SetFullScissorRects()
+public void SetScissor(bool active)
+```
+
+### Wireframe
+
+```csharp
+public void SetWireframe(bool wireframe)
+```
+
+Switches the fill mode between `Solid` and `Wireframe` for subsequent draw calls.
+
+---
+
+### Texture Operations
+
+#### CopyTexture
+
+```csharp
+public void CopyTexture(Texture2D src, Texture2D dest)
+```
+
+Records a GPU-side texture copy from `src` to `dest`.
+
+#### ResolveMultisampledTexture
+
+```csharp
+public void ResolveMultisampledTexture(Texture src, Texture dest)
+public void ResolveMultisampledTexture(RenderTexture src, RenderTexture dest)
+```
+
+Resolves a multisampled texture into a non-multisampled one. The formats must match; throws `InvalidOperationException` otherwise.
+
+---
+
+### Debug Groups
+
+```csharp
+public void PushDebugGroup(string name)
+public void PopDebugGroup()
+```
+
+Marks a named section in GPU command streams visible in graphics debuggers such as RenderDoc or PIX.
+
+---
+
+### Lifecycle
+
+#### Clear
+
+```csharp
+public void Clear()
+```
+
+Ends recording, submits queued resource disposals to `Graphics`, and resets all state. Called automatically by `CommandBufferPool.Release`.
+
+#### Dispose
+
+```csharp
+public void Dispose()
+```
+
+Disposes the underlying `CommandList` and all associated Veldrid resources. Do not use a buffer after calling `Dispose`.
+
+---
+
+## PropertyState and KeywordState
+
+`PropertyState` is a typed dictionary of shader uniform values — textures, scalars, vectors, matrices, and raw buffers — that travels with a `CommandBuffer` and is uploaded to the GPU when `BindResources` is called internally.
+
+`KeywordState` stores string key/value pairs that select compiled shader variant permutations. Setting a keyword causes the pipeline cache to look up or compile the correct `ShaderPipeline` variant.
+
+```csharp
+// PropertyState example (applied to a CommandBuffer)
+cmd.SetFloat("_Roughness", 0.4f);
+cmd.SetTexture("_AlbedoMap", albedoTexture);
+cmd.SetMatrix("_Model", myTransform.localToWorldMatrix.ToFloat());
+
+// KeywordState example
+cmd.SetKeyword("_RECEIVE_SHADOWS", "ON");
+```
+
+<Note>
+`PropertyState` values set directly on a `CommandBuffer` accumulate for the lifetime of the recording. They are reset when `Clear()` is called (i.e., when the buffer is returned to the pool).
+</Note>

@@ -1,0 +1,615 @@
+---
+title: 'GameObject API — Entities and Component Host'
+sidebarTitle: 'GameObject'
+description: 'Full reference for Prowl's GameObject: component management, hierarchy control, instantiation, destruction, tag/layer queries, and scene search.'
+---
+
+`GameObject` is the fundamental entity type in Prowl. Every object you place in a scene — characters, lights, cameras, UI roots — is a `GameObject`. It does not contain gameplay logic itself; instead it acts as a host for `MonoBehaviour` components that implement behavior. Each `GameObject` owns a `Transform`, a parent reference, a list of children, and a collection of components sorted by execution order. `GameObject` inherits from `EngineObject`, giving it an `InstanceID`, an `AssetID`, a `Name`, and the two-phase destroy system.
+
+---
+
+## Constructors
+
+```csharp
+public GameObject()
+public GameObject(string name = "New GameObject")
+public GameObject(AssetRef<Prefab> prefab)
+```
+
+<Tabs>
+  <Tab title="Default">
+    ```csharp
+    var go = new GameObject();           // Name = "New GameObject"
+    var go2 = new GameObject("Player");  // Named explicitly
+    ```
+  </Tab>
+  <Tab title="From Prefab">
+    ```csharp
+    // In play mode: deep-copies the prefab data
+    // In editor mode: links via PrefabLink and applies it
+    var go = new GameObject(myPrefabRef);
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Core Properties
+
+<ResponseField name="Transform" type="Transform">
+  The `Transform` component that controls this object's position, rotation, and scale. Every `GameObject` has exactly one `Transform`; it is not removable.
+
+  ```csharp
+  public Transform Transform { get; }
+  ```
+
+  ```csharp
+  go.Transform.position = new Vector3(0, 1, 0);
+  go.Transform.localEulerAngles = new Vector3(0, 90, 0);
+  ```
+</ResponseField>
+
+<ResponseField name="enabled" type="bool">
+  Whether this `GameObject` is explicitly enabled. Setting this to `false` disables the object and all its descendants in the hierarchy, triggering `OnDisable` on every active `MonoBehaviour`.
+
+  ```csharp
+  public bool enabled { get; set; }
+  ```
+</ResponseField>
+
+<ResponseField name="enabledInHierarchy" type="bool">
+  `true` only when this object **and** every ancestor up to the scene root are all enabled. Read-only; updated automatically when the hierarchy changes.
+
+  ```csharp
+  public bool enabledInHierarchy { get; }
+  ```
+</ResponseField>
+
+<ResponseField name="tag" type="string">
+  The string tag of this object, resolved through `TagLayerManager`. Setting this stores an index internally; reading it looks up the current string for that index.
+
+  ```csharp
+  public string tag { get; set; }
+  ```
+
+  ```csharp
+  go.tag = "Player";
+  bool isPlayer = go.CompareTag("Player"); // true
+  ```
+</ResponseField>
+
+<ResponseField name="layer" type="string">
+  The string layer name, also managed through `TagLayerManager` by index.
+
+  ```csharp
+  public string layer { get; set; }
+  ```
+</ResponseField>
+
+<ResponseField name="isStatic" type="bool">
+  Marks this object as static for baking/batching purposes. Runtime changes may not propagate to all subsystems immediately.
+
+  ```csharp
+  public bool isStatic { get; set; }
+  ```
+</ResponseField>
+
+<ResponseField name="hideFlags" type="HideFlags">
+  Controls visibility in the editor hierarchy, inspector, and serialization output.
+
+  ```csharp
+  public HideFlags hideFlags = HideFlags.None;
+  ```
+</ResponseField>
+
+---
+
+## Hierarchy Properties
+
+<ResponseField name="parent" type="GameObject?">
+  The direct parent of this object, or `null` if this is a scene root object. Use `SetParent(...)` to modify the hierarchy.
+
+  ```csharp
+  public GameObject? parent { get; }
+  ```
+</ResponseField>
+
+<ResponseField name="children" type="List<GameObject>">
+  The direct children of this object. Treat as read-only; use `SetParent` on a child to add or remove it.
+
+  ```csharp
+  public List<GameObject> children;
+  ```
+</ResponseField>
+
+<ResponseField name="childCount" type="int">
+  Shorthand for `children.Count`.
+
+  ```csharp
+  public int childCount { get; }
+  ```
+</ResponseField>
+
+<ResponseField name="Identifier" type="Guid">
+  A persistent GUID that survives serialization round-trips (unlike `InstanceID`). Used by the prefab and cloning systems to correlate objects across copies.
+
+  ```csharp
+  public Guid Identifier { get; }
+  ```
+</ResponseField>
+
+<ResponseField name="Scene" type="Scene?">
+  The `Scene` this object belongs to, held as a `WeakReference`. Returns `null` if the object has not been added to a scene. Set automatically by `Scene.Add(...)`.
+
+  ```csharp
+  public Scene? Scene { get; internal set; }
+  ```
+</ResponseField>
+
+<ResponseField name="PrefabLink" type="PrefabLink">
+  The link that connects this object (or one of its ancestors) to a source `Prefab`. `null` for ordinary GameObjects with no prefab ancestry.
+
+  ```csharp
+  public PrefabLink PrefabLink { get; internal set; }
+  ```
+</ResponseField>
+
+<ResponseField name="AffectedByPrefabLink" type="PrefabLink">
+  Walks up the hierarchy to find the nearest `PrefabLink`. Returns this object's own link first, then walks to parents. Returns `null` if no ancestor has a link.
+
+  ```csharp
+  public PrefabLink AffectedByPrefabLink { get; }
+  ```
+</ResponseField>
+
+---
+
+## Hierarchy Methods
+
+### SetParent
+
+Re-parents this `GameObject` under `NewParent`. Optionally preserves the object's world-space position and rotation.
+
+```csharp
+public bool SetParent(GameObject NewParent, bool worldPositionStays = true)
+```
+
+<ParamField path="NewParent" type="GameObject" required>
+  The new parent. Pass `null` to make this object a scene root.
+</ParamField>
+
+<ParamField path="worldPositionStays" type="bool">
+  When `true` (default), the object's world-space position, rotation, and scale are preserved by recalculating local values. When `false`, local transform values are kept, which changes the world position.
+</ParamField>
+
+<ResponseField name="returns" type="bool">
+  `true` if the parent was changed; `false` if the operation was rejected (e.g. `NewParent` is a descendant of this object).
+</ResponseField>
+
+```csharp
+child.SetParent(parentGO);                   // preserve world position
+child.SetParent(parentGO, worldPositionStays: false); // keep local values
+child.SetParent(null);                       // detach to scene root
+```
+
+---
+
+### IsChildOf
+
+Returns `true` if this object is anywhere in the descendant hierarchy of `parent`.
+
+```csharp
+public bool IsChildOf(GameObject parent)
+```
+
+---
+
+### IsChildOrSameTransform (static)
+
+Returns `true` if `transform` is the same as `inParent` or is one of its descendants.
+
+```csharp
+public static bool IsChildOrSameTransform(GameObject transform, GameObject inParent)
+```
+
+---
+
+### GetChildrenDeep
+
+Returns all descendants (children, grandchildren, …) of this object in a flat enumerable.
+
+```csharp
+public IEnumerable<GameObject> GetChildrenDeep()
+public void GetChildrenDeep(List<GameObject> resultList)
+```
+
+---
+
+### GetSiblingIndex / SetSiblingIndex
+
+Gets or sets the zero-based index of this object within its parent's `children` list.
+
+```csharp
+public int? GetSiblingIndex()
+public void SetSiblingIndex(int index)
+```
+
+---
+
+### FindChildByIdentifier
+
+Searches this object and optionally all descendants for a child with a matching `Guid` identifier.
+
+```csharp
+public GameObject FindChildByIdentifier(Guid identifier, bool deep = true)
+```
+
+---
+
+## Component Management
+
+### AddComponent&lt;T&gt;
+
+Adds a new component of type `T` to this `GameObject`. If `T` carries `[RequireComponent]`, its dependencies are also added automatically. Components are sorted by `[ExecutionOrder]` after every add.
+
+```csharp
+public T AddComponent<T>() where T : MonoBehaviour, new()
+```
+
+<ResponseField name="returns" type="T">
+  The newly created and attached component instance.
+</ResponseField>
+
+```csharp
+var rb = go.AddComponent<Rigidbody>();
+```
+
+---
+
+### AddComponent (Type overload)
+
+Non-generic version. Returns `null` if `type` does not derive from `MonoBehaviour`.
+
+```csharp
+public MonoBehaviour AddComponent(Type type)
+```
+
+---
+
+### AddComponent (instance overload)
+
+Attaches an already-constructed `MonoBehaviour` instance. Useful when you need to configure the component before `Awake` is called.
+
+```csharp
+public void AddComponent(MonoBehaviour comp)
+```
+
+---
+
+### RemoveComponent&lt;T&gt;
+
+Removes a specific component instance. Calls `OnDisable` (if active) and `OnDestroy` (if started). Will refuse to remove a component that another component declares via `[RequireComponent]`.
+
+```csharp
+public void RemoveComponent<T>(T component) where T : MonoBehaviour
+```
+
+<ParamField path="component" type="T" required>
+  The exact component instance to remove.
+</ParamField>
+
+---
+
+### RemoveComponent (untyped overloads)
+
+```csharp
+public void RemoveComponent(MonoBehaviour component)
+public void RemoveComponent(Guid component)   // removes by Identifier
+```
+
+---
+
+### RemoveAll&lt;T&gt;
+
+Removes **all** components of type `T` at once.
+
+```csharp
+public void RemoveAll<T>() where T : MonoBehaviour
+```
+
+---
+
+### GetComponent&lt;T&gt;
+
+Returns the first component of type `T` attached to this object, or `null`.
+
+```csharp
+public T? GetComponent<T>() where T : MonoBehaviour
+public MonoBehaviour? GetComponent(Type type)
+```
+
+```csharp
+var cam = go.GetComponent<Camera>();
+```
+
+---
+
+### TryGetComponent&lt;T&gt;
+
+Pattern-match variant. Returns `true` and sets `component` when found.
+
+```csharp
+public bool TryGetComponent<T>(out T? component) where T : MonoBehaviour
+```
+
+```csharp
+if (go.TryGetComponent<Rigidbody>(out var rb))
+    rb.AddForce(Vector3.Up * 10f);
+```
+
+---
+
+### GetComponents&lt;T&gt;
+
+Returns all components of type `T` on this object.
+
+```csharp
+public IEnumerable<T> GetComponents<T>() where T : MonoBehaviour
+public IEnumerable<MonoBehaviour> GetComponents(Type type)
+public IEnumerable<MonoBehaviour> GetComponents()   // all components
+```
+
+---
+
+### GetComponentInParent&lt;T&gt;
+
+Searches this object (optionally) and walks up through parents until a component of type `T` is found.
+
+```csharp
+public T? GetComponentInParent<T>(bool includeSelf = true, bool includeInactive = false)
+    where T : MonoBehaviour
+
+public MonoBehaviour? GetComponentInParent(Type componentType,
+    bool includeSelf = true, bool includeInactive = false)
+```
+
+<ParamField path="includeSelf" type="bool">
+  When `true` (default), the search starts with this object itself.
+</ParamField>
+
+<ParamField path="includeInactive" type="bool">
+  When `true`, disabled objects in the parent chain are also searched.
+</ParamField>
+
+---
+
+### GetComponentsInParent&lt;T&gt;
+
+Returns all components of type `T` across this object and its ancestors.
+
+```csharp
+public IEnumerable<T> GetComponentsInParent<T>(bool includeSelf = true, bool includeInactive = false)
+    where T : MonoBehaviour
+
+public IEnumerable<MonoBehaviour> GetComponentsInParent(Type type,
+    bool includeSelf = true, bool includeInactive = false)
+```
+
+---
+
+### GetComponentInChildren&lt;T&gt;
+
+Searches this object (optionally) and recurses through children until a component of type `T` is found.
+
+```csharp
+public T? GetComponentInChildren<T>(bool includeSelf = true, bool includeInactive = false)
+    where T : MonoBehaviour
+
+public MonoBehaviour GetComponentInChildren(Type componentType,
+    bool includeSelf = true, bool includeInactive = false)
+```
+
+---
+
+### GetComponentsInChildren&lt;T&gt;
+
+Returns all components of type `T` across this object and all descendants.
+
+```csharp
+public IEnumerable<T> GetComponentsInChildren<T>(bool includeSelf = true, bool includeInactive = false)
+    where T : MonoBehaviour
+
+public IEnumerable<MonoBehaviour> GetComponentsInChildren(Type type,
+    bool includeSelf = true, bool includeInactive = false)
+```
+
+```csharp
+// Find every renderer under this root object
+foreach (var r in root.GetComponentsInChildren<MeshRenderer>())
+    r.material = newMat;
+```
+
+---
+
+### GetComponentByIdentifier
+
+Finds a component by its persistent `Guid` identifier rather than type.
+
+```csharp
+public MonoBehaviour? GetComponentByIdentifier(Guid identifier)
+```
+
+---
+
+## Messaging
+
+### BroadcastMessage
+
+Invokes a named method on every `MonoBehaviour` attached to this object and **all of its children** (recursive). Parameters are passed as a `params object[]`.
+
+```csharp
+public void BroadcastMessage(string methodName, params object[] objs)
+```
+
+<ParamField path="methodName" type="string" required>
+  The method name to invoke via reflection. Searched with `Public | NonPublic | Instance | FlattenHierarchy`.
+</ParamField>
+
+<ParamField path="objs" type="object[]">
+  Optional arguments forwarded to the method.
+</ParamField>
+
+```csharp
+go.BroadcastMessage("OnHit", damageAmount);
+```
+
+---
+
+### SendMessage
+
+Same as `BroadcastMessage` but limited to components on **this** object only — does not recurse into children.
+
+```csharp
+public void SendMessage(string methodName, params object[] objs)
+```
+
+---
+
+### CompareTag
+
+Compares this object's tag against a string, case-insensitively, using the current tag registry.
+
+```csharp
+public bool CompareTag(string otherTag)
+```
+
+<ResponseField name="returns" type="bool">
+  `true` if the tags match (case-insensitive).
+</ResponseField>
+
+```csharp
+if (other.CompareTag("Enemy"))
+    TakeDamage(10);
+```
+
+---
+
+## Static Factory / Search Methods
+
+### Instantiate (GameObject overloads)
+
+Deep-clones an existing `GameObject` and adds it to the active scene.
+
+```csharp
+public static GameObject Instantiate(GameObject original)
+public static GameObject Instantiate(GameObject original, GameObject? parent)
+public static GameObject Instantiate(GameObject original, Vector3 position, Quaternion rotation, GameObject? parent)
+```
+
+<ParamField path="original" type="GameObject" required>
+  The template object. Must not be destroyed.
+</ParamField>
+<ParamField path="parent" type="GameObject?" required={false}>
+  Optional parent to attach the new instance to.
+</ParamField>
+<ParamField path="position" type="Vector3" required={false}>
+  World-space position override applied after cloning.
+</ParamField>
+<ParamField path="rotation" type="Quaternion" required={false}>
+  World-space rotation override applied after cloning.
+</ParamField>
+
+<ResponseField name="returns" type="GameObject">
+  The cloned `GameObject` already added to the active scene.
+</ResponseField>
+
+---
+
+### Instantiate (Prefab overloads)
+
+Instantiates from an `AssetRef<Prefab>`. Returns `null` if the reference is unavailable.
+
+```csharp
+public static GameObject Instantiate(AssetRef<Prefab> original)
+public static GameObject Instantiate(AssetRef<Prefab> original, GameObject? parent)
+public static GameObject Instantiate(AssetRef<Prefab> original, GameObject? parent, Vector3 position, Quaternion rotation)
+```
+
+```csharp
+// Spawn a prefab at a world position
+GameObject bullet = GameObject.Instantiate(bulletPrefab, null,
+    firePoint.position, firePoint.rotation);
+```
+
+---
+
+### Find
+
+Searches all objects in the active scene by name. Returns the first match, or `null`.
+
+```csharp
+public static GameObject Find(string otherName, bool ignoreCase = false)
+```
+
+<ParamField path="otherName" type="string" required>
+  The name to search for.
+</ParamField>
+<ParamField path="ignoreCase" type="bool">
+  When `true`, uses `OrdinalIgnoreCase` matching. Default is `false` (exact case).
+</ParamField>
+
+```csharp
+GameObject hud = GameObject.Find("HUD Root");
+```
+
+<Warning>
+`Find` iterates the entire scene graph. Do not call it in `Update`; cache the result in `Awake` or `Start`.
+</Warning>
+
+---
+
+### FindGameObjectWithTag
+
+Returns the first `GameObject` in the scene whose tag matches `otherTag` (case-insensitive).
+
+```csharp
+public static GameObject FindGameObjectWithTag(string otherTag)
+```
+
+---
+
+### FindGameObjectsWithTag
+
+Returns an array of **all** `GameObject`s in the scene with the given tag.
+
+```csharp
+public static GameObject[] FindGameObjectsWithTag(string otherTag)
+```
+
+```csharp
+GameObject[] enemies = GameObject.FindGameObjectsWithTag("Enemy");
+foreach (var e in enemies)
+    e.enabled = false;
+```
+
+---
+
+## Cloning
+
+```csharp
+public new GameObject Clone()
+public void CopyTo(GameObject target)
+```
+
+`Clone()` performs a deep copy via Prowl's cloning infrastructure, producing a new `GameObject` with new `InstanceID` and component instances. `CopyTo` copies data into an existing target (used by the prefab apply system).
+
+---
+
+## Serialization
+
+`GameObject` implements `ISerializable` and stores the full hierarchy (children, components, transform) into Prowl's `EchoObject` format. Normally you interact with this indirectly through `SceneManager` and the asset pipeline.
+
+```csharp
+public void Serialize(ref EchoObject compoundTag, SerializationContext ctx)
+public void Deserialize(EchoObject value, SerializationContext ctx)
+```

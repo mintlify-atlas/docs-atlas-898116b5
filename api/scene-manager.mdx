@@ -1,0 +1,304 @@
+---
+title: 'SceneManager API — Load and Control Scenes'
+sidebarTitle: 'SceneManager'
+description: 'Reference for Prowl's SceneManager: load, unload, and query scenes; access the active scene and GameObjects; run the update and render loop.'
+---
+
+`SceneManager` is the static hub for all scene lifecycle operations in Prowl. It holds the currently active `Scene`, drives the per-frame update and physics tick for every `GameObject` it contains, dispatches rendering to all active `Camera` components, and provides store/restore helpers for the editor's play-mode enter/exit flow. Because it is `static`, there is always exactly one active scene at a time; switching scenes calls `Clear()` to tear down the old one before the new one is loaded.
+
+<Note>
+`SceneManager` lives in the `Prowl.Runtime.SceneManagement` namespace. Add `using Prowl.Runtime.SceneManagement;` if you reference it directly, or access it through the `Prowl.Runtime` aliases used elsewhere in the engine.
+</Note>
+
+---
+
+## Properties
+
+<ResponseField name="Current" type="AssetRef<Scene>">
+  The asset reference wrapping the active scene. Changing this directly is not recommended — use `LoadScene(...)` or `InstantiateNewScene()` so that the proper teardown and initialization callbacks fire.
+
+  ```csharp
+  public static AssetRef<Scene> Current { get; private set; }
+  ```
+</ResponseField>
+
+<ResponseField name="Scene" type="Scene">
+  Convenience accessor for the resolved `Scene` instance. Equivalent to `Current.Res!`. Use this when you need direct access to `AllObjects`, `ActiveObjects`, or `Add`/`Remove`.
+
+  ```csharp
+  public static Scene Scene => Current.Res!;
+  ```
+
+  ```csharp
+  // Iterate every root-level active GameObject
+  foreach (var go in SceneManager.Scene.ActiveObjects)
+      Console.WriteLine(go.Name);
+  ```
+</ResponseField>
+
+---
+
+## Scene Loading
+
+### LoadScene (Scene overload)
+
+Replaces the active scene with a fully constructed `Scene` object. Calls `Clear()` first, then applies prefab links, fires the `[OnSceneLoad]` attribute callbacks, and calls `OnLevelWasLoaded` on every `MonoBehaviour` in the new scene.
+
+```csharp
+public static void LoadScene(Scene scene)
+```
+
+<ParamField path="scene" type="Scene" required>
+  The pre-built `Scene` instance to make active.
+</ParamField>
+
+```csharp
+Scene myScene = /* load or build a scene */;
+SceneManager.LoadScene(myScene);
+```
+
+---
+
+### LoadScene (AssetRef overload)
+
+Same as above but takes an `AssetRef<Scene>`. Throws if the reference is not yet available (i.e. the asset has not finished loading).
+
+```csharp
+public static void LoadScene(AssetRef<Scene> scene)
+```
+
+<ParamField path="scene" type="AssetRef<Scene>" required>
+  An asset reference to the scene. Must have `IsAvailable == true` before calling.
+</ParamField>
+
+<Warning>
+Calling `LoadScene` with an unavailable `AssetRef<Scene>` throws an `Exception`. Always check `scene.IsAvailable` first when the asset may still be loading asynchronously.
+</Warning>
+
+```csharp
+AssetRef<Scene> sceneRef = Application.AssetProvider.Load<Scene>("Scenes/Level1");
+if (sceneRef.IsAvailable)
+    SceneManager.LoadScene(sceneRef);
+```
+
+---
+
+### InstantiateNewScene
+
+Clears the current scene and populates it with a default setup: a directional light and a main camera pre-configured with `MotionBlurEffect`, `KawaseBloomEffect`, and `ToneMapperEffect`. Useful for the editor's "New Scene" command or test harnesses.
+
+```csharp
+public static void InstantiateNewScene()
+```
+
+```csharp
+// Editor "New Scene" button handler
+SceneManager.InstantiateNewScene();
+```
+
+---
+
+## Scene Storage (Editor Play Mode)
+
+The store/restore pair lets the editor snapshot the scene before entering play mode and recover the original authored state when the user presses Stop.
+
+### StoreScene
+
+Serializes the current scene into an internal `EchoObject` snapshot and records its `AssetID`. Asserts that no scene is already stored.
+
+```csharp
+public static void StoreScene()
+```
+
+### RestoreScene
+
+Deserializes the stored snapshot back into a live `Scene`, replaces `Current`, resolves prefab links, and fires `OnLevelWasLoaded`. Asserts that a snapshot exists.
+
+```csharp
+public static void RestoreScene()
+```
+
+### ClearStoredScene
+
+Discards the stored snapshot without restoring it. Asserts that a snapshot exists.
+
+```csharp
+public static void ClearStoredScene()
+```
+
+<CodeGroup>
+```csharp Enter Play Mode
+SceneManager.StoreScene();
+Application.IsPlaying = true;
+```
+```csharp Exit Play Mode
+Application.IsPlaying = false;
+SceneManager.RestoreScene();
+SceneManager.ClearStoredScene();
+```
+</CodeGroup>
+
+---
+
+### Clear
+
+Tears down the active scene: fires `[OnSceneUnload]` attribute callbacks, destroys all `GameObject`s, processes the engine's destroy queue via `EngineObject.HandleDestroyed()`, resets the main camera reference, and replaces `Current` with a fresh empty `Scene`.
+
+```csharp
+[OnAssemblyUnload]
+public static void Clear()
+```
+
+<Note>
+`Clear()` is also tagged `[OnAssemblyUnload]`, so it fires automatically when the editor hot-reloads assemblies.
+</Note>
+
+---
+
+## Frame Loop
+
+### Update
+
+Drives one simulation tick. Called each frame by the host's update delegate (typically `Application.Update`).
+
+```csharp
+public static void Update()
+```
+
+Internally this method:
+1. Snapshots the list of active `GameObject`s.
+2. Calls `PreUpdate` on each, which triggers deferred `Awake` and `Start` calls.
+3. Steps the physics world (only when `Application.IsPlaying`).
+4. Runs `UpdateCoroutines` and `Update` on every enabled `MonoBehaviour`.
+5. Runs `LateUpdate` on every enabled `MonoBehaviour`.
+6. Runs end-of-frame coroutine queues.
+
+```csharp
+// Typical wiring in Application.Update
+Application.Update += SceneManager.Update;
+```
+
+---
+
+### PhysicsUpdate
+
+Drives one fixed-rate physics tick. Calls `FixedUpdate` and the fixed-update coroutine queue on every enabled `MonoBehaviour`.
+
+```csharp
+public static void PhysicsUpdate()
+```
+
+```csharp
+// Wired to a fixed-rate timer by the physics integration
+Application.Update += () =>
+{
+    if (ShouldRunPhysicsTick())
+        SceneManager.PhysicsUpdate();
+};
+```
+
+---
+
+### Draw
+
+Collects all `Camera` components in the active scene (including those on child objects), sorts them by `Camera.Depth`, and renders each through its assigned `RenderPipeline`. Accepts an optional render-texture target for off-screen rendering.
+
+```csharp
+public static bool Draw(RenderTexture? target = null)
+```
+
+<ParamField path="target" type="RenderTexture?" required={false}>
+  When provided, any camera that does not have its own target renders into this texture. Pass `null` (default) to render to the screen.
+</ParamField>
+
+<ResponseField name="returns" type="bool">
+  `true` if at least one camera was found and rendered; `false` if the scene contains no cameras.
+</ResponseField>
+
+```csharp
+Application.Render += () =>
+{
+    bool didRender = SceneManager.Draw();
+    if (!didRender)
+        Debug.LogWarning("No cameras in scene!");
+};
+```
+
+---
+
+## Utility
+
+### ForeachComponent
+
+Iterates a sequence of `GameObject`s and invokes an `Action<MonoBehaviour>` for every **enabled** `MonoBehaviour` on each object. Used internally by `Update`, `PhysicsUpdate`, and `Draw`, but available for custom engine extensions.
+
+```csharp
+public static void ForeachComponent(IEnumerable<GameObject> objs, Action<MonoBehaviour> action)
+```
+
+<ParamField path="objs" type="IEnumerable<GameObject>" required>
+  The objects to iterate. Typically `Scene.ActiveObjects`.
+</ParamField>
+
+<ParamField path="action" type="Action<MonoBehaviour>" required>
+  The delegate to invoke for each enabled component. Skipped automatically if `MonoBehaviour.EnabledInHierarchy` is `false`.
+</ParamField>
+
+```csharp
+// Call a custom method on every enabled component
+SceneManager.ForeachComponent(
+    SceneManager.Scene.ActiveObjects,
+    comp => comp.SendMessage("OnCustomEvent")
+);
+```
+
+---
+
+### Has
+
+Checks whether a specific `GameObject` instance currently exists anywhere in the active scene (recursive search by `InstanceID`).
+
+```csharp
+public static bool Has(GameObject original)
+```
+
+<ParamField path="original" type="GameObject" required>
+  The GameObject to search for.
+</ParamField>
+
+<ResponseField name="returns" type="bool">
+  `true` if the object is found in the scene hierarchy; `false` otherwise.
+</ResponseField>
+
+```csharp
+if (SceneManager.Has(myEnemy))
+    myEnemy.BroadcastMessage("TakeDamage", 10);
+```
+
+---
+
+## Scene Load Callbacks
+
+<Accordion title="[OnSceneLoad] and [OnSceneUnload] attribute hooks">
+
+Prowl provides two method-level attributes that let any static method in your codebase subscribe to scene transitions without coupling to `SceneManager` directly:
+
+| Attribute | Fires when |
+|-----------|-----------|
+| `[OnSceneLoad]` (via `OnSceneLoadAttribute.Invoke()`) | After a new scene is fully loaded and prefabs are resolved. |
+| `[OnSceneUnload]` (via `OnSceneUnloadAttribute.Invoke()`) | Before the current scene is destroyed during `Clear()`. |
+
+These hooks are discovered automatically by the assembly manager; no manual registration is required.
+
+```csharp
+public static class GameBootstrap
+{
+    [OnSceneLoad]
+    public static void OnLoad()
+    {
+        Debug.Log("Scene loaded — bootstrapping systems...");
+    }
+}
+```
+
+</Accordion>

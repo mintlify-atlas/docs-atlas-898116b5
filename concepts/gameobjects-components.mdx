@@ -1,0 +1,263 @@
+---
+title: 'GameObjects and Components in Prowl Engine'
+sidebarTitle: 'GameObjects'
+description: 'Understand Prowl's entity-component model: GameObjects are scene entities composed of MonoBehaviour components that define their behaviour.'
+---
+
+Prowl's entity-component model is the backbone of everything you build. Every interactive thing in a scene — a character, a camera, a light source, a trigger volume — is a **GameObject**. On its own a GameObject is just a named container with a Transform; the actual behaviour comes from **MonoBehaviour** components you attach to it. This mirrors the workflow many Unity developers are already familiar with while sitting on a clean .NET 9 foundation.
+
+## EngineObject — the base class
+
+`EngineObject` is the root of every first-class object in Prowl (both `GameObject` and `MonoBehaviour` extend it). It provides:
+
+| Member | Purpose |
+|---|---|
+| `InstanceID` | Auto-incrementing integer unique to each live instance |
+| `AssetID` | `Guid` used when the object is saved as an asset on disk |
+| `FileID` | Sub-asset index inside an asset file (0 = main asset) |
+| `Name` | Human-readable display name |
+| `IsDestroyed` | Set to `true` after `DestroyImmediate()` / `DestroyLater()` |
+
+```csharp
+// Walk every MonoBehaviour of a given type in the active scene
+MySystem[] systems = EngineObject.FindObjectsOfType<MySystem>();
+
+// Lookup by runtime instance ID
+EngineObject obj = EngineObject.FindObjectByID<EngineObject>(someID);
+```
+
+<Note>
+Comparing an `EngineObject` to `null` is safe — the equality operator returns `true` when the object `IsDestroyed`, so the pattern `if (myRef == null)` works even on destroyed objects.
+</Note>
+
+---
+
+## GameObject
+
+A `GameObject` is a scene entity that holds a `Transform`, a flat list of `MonoBehaviour` components, and an ordered list of child `GameObject` objects.
+
+### Creating GameObjects
+
+```csharp
+// Empty object — will receive a Transform automatically
+GameObject empty = new GameObject("Player");
+
+// Instantiate from a prefab asset reference
+AssetRef<Prefab> prefabRef = /* loaded from AssetDatabase */;
+GameObject fromPrefab = new GameObject(prefabRef);
+```
+
+### Tags and layers
+
+Tags and layers are string names managed by `TagLayerManager`. Use `CompareTag` instead of manually checking indices so renames stay safe:
+
+```csharp
+go.tag   = "Enemy";
+go.layer = "Characters";
+
+if (go.CompareTag("Enemy"))
+    Debug.Log("Found an enemy!");
+```
+
+### Enabled state
+
+```csharp
+go.enabled = false;           // disable this object locally
+bool active = go.enabledInHierarchy; // false if any ancestor is disabled
+```
+
+### Hierarchy
+
+```csharp
+go.SetParent(parentGO, worldPositionStays: true);
+GameObject root = go.parent;                   // null for root objects
+List<GameObject> kids = go.children;
+IEnumerable<GameObject> deep = go.GetChildrenDeep();
+
+// Find by name or tag
+GameObject hero   = GameObject.Find("Hero");
+GameObject enemy  = GameObject.FindGameObjectWithTag("Enemy");
+GameObject[] mobs = GameObject.FindGameObjectsWithTag("Enemy");
+```
+
+---
+
+## Component system
+
+### Adding and retrieving components
+
+```csharp
+// Generic, compile-time-safe form
+Rigidbody rb   = go.AddComponent<Rigidbody>();
+Rigidbody rb2  = go.GetComponent<Rigidbody>();
+
+// Pattern-match style
+if (go.TryGetComponent<AudioSource>(out var audio))
+    audio.Play();
+
+// All components of a type
+foreach (Collider col in go.GetComponents<Collider>())
+    col.Enabled = false;
+```
+
+### Hierarchy searches
+
+```csharp
+// Walk up the parent chain
+Camera cam = go.GetComponentInParent<Camera>();
+
+// Walk down into children
+Light light = go.GetComponentInChildren<Light>(includeSelf: false);
+
+// Collect all renderers in the whole sub-tree
+var renderers = go.GetComponentsInChildren<MeshRenderer>();
+```
+
+### Removing components
+
+```csharp
+go.RemoveComponent(existingComp);   // one instance
+go.RemoveAll<AudioSource>();        // all of the same type
+```
+
+<Warning>
+Removing a component that is required by another component on the same GameObject will fail with an error. Prowl checks `[RequireComponent]` dependencies before allowing removal.
+</Warning>
+
+---
+
+## Transform
+
+Every `GameObject` has exactly one `Transform` that lives alongside the component list. You access it via `go.Transform` or from inside a `MonoBehaviour` via the `Transform` property.
+
+```csharp
+// World-space read/write
+go.Transform.position = new Vector3(0, 1, 0);
+go.Transform.rotation = Quaternion.identity;
+
+// Local-space read/write
+go.Transform.localPosition = new Vector3(0, 0, 5);
+go.Transform.localEulerAngles = new System.Numerics.Vector3(0, 90, 0);
+go.Transform.localScale = Vector3.one * 2f;
+
+// Convert between spaces
+Vector3 world = go.Transform.TransformPoint(localPoint);
+Vector3 local = go.Transform.InverseTransformPoint(worldPoint);
+```
+
+<Tip>
+The `Transform` caches world-space matrices using a dirty flag. Write to `localPosition`, `localRotation`, or `localScale`; world values are recomputed on demand.
+</Tip>
+
+---
+
+## Instantiating and destroying GameObjects
+
+### Instantiate
+
+```csharp
+// Clone an existing live object into the current scene
+GameObject clone = GameObject.Instantiate(original);
+
+// From a prefab asset
+GameObject inst = GameObject.Instantiate(prefabRef);
+
+// With parent
+GameObject child = GameObject.Instantiate(original, parentGO);
+
+// With position, rotation, and parent
+GameObject placed = GameObject.Instantiate(
+    original,
+    position: new Vector3(10, 0, 0),
+    rotation: Quaternion.identity,
+    parent:   null);
+```
+
+### Destroy
+
+<Tabs>
+  <Tab title="DestroyLater">
+    ```csharp
+    // Queued for end-of-frame cleanup — safe to call mid-Update
+    go.DestroyLater();
+    ```
+    This is the standard way to destroy objects during gameplay. Prowl processes the queue via `EngineObject.HandleDestroyed()` after each update.
+  </Tab>
+  <Tab title="DestroyImmediate">
+    ```csharp
+    // Destroyed right now — use carefully; avoid during iteration
+    go.DestroyImmediate();
+    ```
+    Useful inside editor tooling or when you need guaranteed synchronous cleanup.
+  </Tab>
+</Tabs>
+
+Destroying a `GameObject` automatically:
+- Destroys all child `GameObject`s recursively
+- Calls `OnDisable` then `OnDestroy` on every attached `MonoBehaviour` that has started
+
+---
+
+## Prefabs
+
+A `Prefab` is an `EngineObject` resource that wraps a root `GameObject` tree and acts as a reusable template.
+
+### PrefabLink
+
+When a `GameObject` is created from a `Prefab` in the editor, it maintains a `PrefabLink` that records which fields have been deliberately overridden. Applying the link re-copies the prefab data while restoring the per-instance overrides:
+
+```csharp
+// Read the link on a runtime instance
+PrefabLink link = go.PrefabLink;
+
+// Apply prefab data + per-instance overrides
+link.Apply();
+
+// Check whether a field has been overridden locally
+bool overridden = link.HasChange(go, nameof(go.Name));
+```
+
+### PrefabUtility
+
+```csharp
+// Link an existing GameObject to a prefab
+PrefabUtility.LinkToPrefab(go, prefabRef);
+
+// Permanently break the link (makes the object independent)
+PrefabUtility.BreakPrefabLink(go);
+```
+
+---
+
+## Attributes
+
+<CardGroup cols={2}>
+  <Card title="[RequireComponent]" icon="link">
+    Automatically adds a dependency when the decorated component is added.
+    ```csharp
+    [RequireComponent(typeof(Rigidbody))]
+    public class PlayerController : MonoBehaviour { }
+    ```
+  </Card>
+  <Card title="[AddComponentMenu]" icon="list">
+    Controls where this component appears in the editor Add Component menu.
+    ```csharp
+    [AddComponentMenu("Physics/Custom Mover")]
+    public class CustomMover : MonoBehaviour { }
+    ```
+  </Card>
+  <Card title="[ExecutionOrder]" icon="arrow-down-1-9">
+    Sets the order in which `Update()` and other loop methods run relative to other components.
+    ```csharp
+    [ExecutionOrder(-100)]
+    public class InputSystem : MonoBehaviour { }
+    ```
+  </Card>
+  <Card title="[ExecuteAlways]" icon="play">
+    Allows the component's lifecycle methods to run in edit mode, not only during play.
+    ```csharp
+    [ExecuteAlways]
+    public class GridSnapper : MonoBehaviour { }
+    ```
+  </Card>
+</CardGroup>

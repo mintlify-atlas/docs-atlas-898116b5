@@ -1,0 +1,387 @@
+---
+title: 'Scripting in Prowl with C# and MonoBehaviour'
+sidebarTitle: 'Scripting'
+description: 'Write game logic in C# by extending MonoBehaviour, using the Prowl scripting lifecycle, attributes, coroutines, and ScriptableObjects.'
+---
+
+All gameplay logic in Prowl is written in C# (.NET 9) by extending `MonoBehaviour`. You attach a script class to a `GameObject` and Prowl calls the appropriate lifecycle methods at the right times — no configuration files, no registration boilerplate. If you have written scripts for Unity, the model will feel immediately familiar; Prowl shares the same lifecycle names and most of the same API surface.
+
+---
+
+## Creating a script
+
+<Steps>
+  <Step title="Create the C# file">
+    In the editor, right-click in the **Assets** panel and choose **Create → C# Script**. Prowl creates a `.cs` file, a companion `.meta` file (handled by `MonoScriptImporter`), and opens the file in your configured editor.
+  </Step>
+  <Step title="Extend MonoBehaviour">
+    Replace the generated stub with your logic. The class name must match the file name.
+
+    ```csharp
+    using Prowl.Runtime;
+
+    public class PlayerController : MonoBehaviour
+    {
+        public float moveSpeed = 5f;
+
+        public override void Update()
+        {
+            float h = Input.GetAxis("Horizontal");
+            float v = Input.GetAxis("Vertical");
+            Transform.position += new Vector3(h, 0, v) * moveSpeed * Time.deltaTime;
+        }
+    }
+    ```
+  </Step>
+  <Step title="Attach to a GameObject">
+    Select a `GameObject` in the hierarchy, click **Add Component** in the Inspector, and find your script. Prowl calls `AddComponent<PlayerController>()` internally.
+  </Step>
+</Steps>
+
+---
+
+## Full lifecycle overview
+
+`MonoBehaviour` lifecycle methods are `virtual` — override only the ones you need. They are called by `SceneManager.Update()`, `SceneManager.PhysicsUpdate()`, and the render pipeline.
+
+<Tabs>
+  <Tab title="Initialisation">
+    | Method | When called |
+    |---|---|
+    | `Awake()` | Once when the component is first created (even if disabled). Runs before `Start`. |
+    | `OnEnable()` | Each time `EnabledInHierarchy` transitions from `false` → `true`. |
+    | `Start()` | Once, just before the first `Update()`, only if the component is enabled. |
+
+    ```csharp
+    public override void Awake()
+    {
+        // One-time setup — safe to run while disabled
+        _rb = GetComponent<Rigidbody>();
+    }
+
+    public override void Start()
+    {
+        // Runs after all Awake() calls — safe to reference other components
+        _rb.Mass = 10f;
+    }
+    ```
+  </Tab>
+  <Tab title="Per-frame update">
+    | Method | When called |
+    |---|---|
+    | `FixedUpdate()` | Fixed timestep (physics tick) — use for forces and physics queries. |
+    | `Update()` | Once per rendered frame. |
+    | `LateUpdate()` | After all `Update()` calls — good for camera following. |
+
+    ```csharp
+    public override void FixedUpdate()
+    {
+        _rb.AddForce(Vector3.up * 10f);
+    }
+
+    public override void LateUpdate()
+    {
+        // Camera lag/smooth-follow logic here
+    }
+    ```
+  </Tab>
+  <Tab title="Disable &amp; destroy">
+    | Method | When called |
+    |---|---|
+    | `OnDisable()` | Each time `EnabledInHierarchy` transitions from `true` → `false`. |
+    | `OnDestroy()` | Once when the component is destroyed, **only** if `Start()` was previously called. |
+
+    ```csharp
+    public override void OnDisable()
+    {
+        // Unsubscribe events, pause effects
+    }
+
+    public override void OnDestroy()
+    {
+        // Release unmanaged resources
+    }
+    ```
+  </Tab>
+  <Tab title="Rendering callbacks">
+    | Method | When called |
+    |---|---|
+    | `OnPreCull(Camera)` | Before the camera culls the scene. |
+    | `OnPreRender(Camera)` | Before the camera renders the scene. |
+    | `OnPostRender(Camera)` | After the camera renders the scene. |
+    | `OnRenderImage(src, dest)` | Post-processing: blit `src` to `dest` using a material. Pair with `[ImageEffectOpaque]` to run before transparent geometry. |
+    | `DrawGizmos()` | Always draws debug gizmos in the Scene view. |
+    | `DrawGizmosSelected()` | Draws gizmos only when this object is selected. |
+    | `OnGUI(Gui)` | In-game UI drawing, called by any Camera with a `GUILayer` component. |
+    | `OnLevelWasLoaded()` | After a new scene finishes loading. |
+
+    ```csharp
+    public override void OnRenderImage(RenderTexture src, RenderTexture dest)
+    {
+        Graphics.Blit(src, dest, _blurMaterial);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Accessing components and GameObjects
+
+From inside any `MonoBehaviour` you can reach the owning `GameObject` and all of its components:
+
+```csharp
+// The attached GameObject and its Transform
+GameObject go = GameObject;
+Transform  t  = Transform;  // shorthand for GameObject.Transform
+
+// Get another component on the same object
+Rigidbody rb = GetComponent<Rigidbody>();
+
+// Pattern-match style — no exception if missing
+if (TryGetComponent<AudioSource>(out var audio))
+    audio.Play();
+
+// Walk up the hierarchy
+Camera cam = GetComponentInParent<Camera>();
+
+// Walk down into children
+Light light = GetComponentInChildren<Light>(includeSelf: false);
+
+// Add a component at runtime
+var emitter = AddComponent<ParticleEmitter>();
+
+// Remove this component from its GameObject
+RemoveSelf();
+```
+
+<Note>
+All these methods are simply forwarded to the underlying `GameObject`. You can also call them on `GameObject` directly: `GameObject.GetComponent<T>()` returns the same result.
+</Note>
+
+---
+
+## ScriptableObject — data assets
+
+`ScriptableObject` is an `EngineObject` that lives purely as an asset on disk. It has no lifecycle beyond `OnEnable()` (called after deserialisation), making it ideal for configuration tables, item databases, and shared settings.
+
+```csharp
+using Prowl.Runtime;
+
+public class EnemyData : ScriptableObject
+{
+    public string enemyName    = "Goblin";
+    public int    maxHealth    = 100;
+    public float  moveSpeed    = 3.5f;
+    public AssetRef<Prefab> deathEffect;
+
+    public override void OnEnable()
+    {
+        // Called once after the asset is loaded from disk
+        Debug.Log($"EnemyData loaded: {enemyName}");
+    }
+}
+```
+
+Reference it from a `MonoBehaviour` just like any other asset:
+
+```csharp
+public class EnemyController : MonoBehaviour
+{
+    public AssetRef<EnemyData> data;
+
+    public override void Start()
+    {
+        EnemyData stats = data.Res;
+        _health = stats.maxHealth;
+    }
+}
+```
+
+---
+
+## Coroutines
+
+Coroutines let you spread work across multiple frames using C# iterators.
+
+```csharp
+public class Door : MonoBehaviour
+{
+    public override void Start()
+    {
+        StartCoroutine(nameof(OpenSequence));
+    }
+
+    private IEnumerator OpenSequence()
+    {
+        // Yield for 2 seconds
+        yield return new WaitForSeconds(2f);
+
+        Debug.Log("Door opening...");
+
+        // Yield until end of frame
+        yield return new WaitForEndOfFrame();
+
+        Debug.Log("Door fully open.");
+    }
+}
+```
+
+### Yield instructions
+
+| Class | Behaviour |
+|---|---|
+| `WaitForSeconds(float s)` | Resumes after at least `s` seconds of game time |
+| `WaitForEndOfFrame` | Resumes at end of the current frame, after rendering |
+| `WaitForFixedUpdate` | Resumes on the next physics tick |
+| `Coroutine` | Resumes when another coroutine completes (chain dependency) |
+
+```csharp
+// Stop a specific coroutine
+StopCoroutine(nameof(OpenSequence));
+
+// Stop all coroutines on this MonoBehaviour
+StopAllCoroutines();
+```
+
+---
+
+## Component attributes
+
+### [RequireComponent]
+
+Ensures that a required component exists on the `GameObject` before this one can be added. The engine adds the dependency automatically.
+
+```csharp
+[RequireComponent(typeof(Rigidbody), typeof(Collider))]
+public class PhysicsController : MonoBehaviour { }
+```
+
+### [AddComponentMenu]
+
+Defines the path that appears in the editor **Add Component** menu.
+
+```csharp
+[AddComponentMenu("Gameplay/Enemy AI")]
+public class EnemyAI : MonoBehaviour { }
+```
+
+### [ExecutionOrder]
+
+Controls the order in which `Update()`, `FixedUpdate()`, and `LateUpdate()` are called relative to other components. Lower numbers execute first. Default is `0`.
+
+```csharp
+[ExecutionOrder(-50)]     // runs before default-order scripts
+public class InputManager : MonoBehaviour { }
+
+[ExecutionOrder(100)]     // runs after default-order scripts
+public class UISyncSystem : MonoBehaviour { }
+```
+
+### [ExecuteAlways]
+
+Makes lifecycle methods run in edit mode (not only during play mode). Use together with null-guards — the full scene infrastructure may not be initialised in edit mode.
+
+```csharp
+[ExecuteAlways]
+public class GridVisualiser : MonoBehaviour
+{
+    public override void DrawGizmos()
+    {
+        // Draws even while editing the scene
+        Gizmos.DrawWireCube(Transform.position, Vector3.one);
+    }
+}
+```
+
+---
+
+## AssemblyMethodAttributes
+
+These attributes decorate **static** methods and let you hook into engine-level events without needing a `MonoBehaviour` in the scene.
+
+<CardGroup cols={2}>
+  <Card title="[OnAssemblyLoad]" icon="plug">
+    Called when the scripting assemblies are (re)loaded — ideal for building lookup tables or registering systems.
+    ```csharp
+    [OnAssemblyLoad]
+    public static void RegisterEffects()
+    {
+        EffectRegistry.Scan();
+    }
+    ```
+  </Card>
+  <Card title="[OnAssemblyUnload]" icon="plug-circle-xmark">
+    Called before assemblies are unloaded (e.g. during hot-reload). Use to clear static caches.
+    ```csharp
+    [OnAssemblyUnload]
+    public static void ClearCache()
+    {
+        EffectRegistry.Clear();
+    }
+    ```
+  </Card>
+  <Card title="[OnSceneLoad]" icon="map">
+    Called after a scene finishes loading. Replaces `Awake`/`Start` for systems that are not attached to any `GameObject`.
+    ```csharp
+    [OnSceneLoad]
+    public static void OnSceneReady()
+    {
+        NavMeshSystem.Build();
+    }
+    ```
+  </Card>
+  <Card title="[OnSceneUnload]" icon="map-location-dot">
+    Called before the current scene is torn down.
+    ```csharp
+    [OnSceneUnload]
+    public static void OnSceneGone()
+    {
+        NavMeshSystem.Dispose();
+    }
+    ```
+  </Card>
+</CardGroup>
+
+`[OnPlaymodeChanged]` is called whenever the editor transitions into or out of play mode:
+
+```csharp
+[OnPlaymodeChanged]
+public static void HandlePlaymodeSwitch()
+{
+    Debug.Log("Play mode changed: " + Application.IsPlaying);
+}
+```
+
+All these attributes accept an optional `order` integer for deterministic invocation sequence when multiple methods carry the same attribute.
+
+---
+
+## Assembly hot-reload in the editor
+
+When you edit a C# source file and save it, Prowl's `AssemblyManager` recompiles and reloads the scripting assemblies without restarting the editor. The reload sequence is:
+
+1. `[OnAssemblyUnload]` callbacks are invoked (clears component caches, reflection caches, etc.).
+2. Assemblies are swapped.
+3. `[OnAssemblyLoad]` callbacks are invoked (re-populates lookup tables, re-discovers importers, etc.).
+4. `AssemblyMethodAttributeBase.FindAll()` scans all loaded assemblies for new callbacks.
+
+<Warning>
+Static fields are reset on assembly reload. If you cache runtime data in a static field (e.g. a singleton instance), ensure you rebuild it inside an `[OnAssemblyLoad]` method or use `ScriptableSingleton<T>` which persists across reloads.
+</Warning>
+
+---
+
+## Sending messages
+
+`MonoBehaviour` and `GameObject` both expose `SendMessage` and `BroadcastMessage` for loose coupling between components:
+
+```csharp
+// Calls "TakeDamage" on every MonoBehaviour on this GameObject
+GameObject.SendMessage("TakeDamage", 25);
+
+// Calls "TakeDamage" on this object AND all of its children
+BroadcastMessage("TakeDamage", 25);
+```
+
+Methods are resolved by name at runtime using reflection, so they work across assembly boundaries without shared interfaces.

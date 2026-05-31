@@ -1,0 +1,155 @@
+---
+title: 'Install Prowl Engine and Run the Editor'
+sidebarTitle: 'Installation'
+description: 'Install .NET 9, clone the Prowl repository, initialize submodules, and open the solution to run the editor on Windows, Linux, or macOS.'
+---
+
+Getting Prowl up and running requires only a few steps: install the .NET 9 SDK, clone the repository, pull down the external submodules, and open the solution in your IDE. There are no official binary releases yet, so you will always build from source. The process is the same on all three supported platforms (Windows, Linux, macOS), with only the submodule initialization script differing per OS.
+
+## Prerequisites
+
+Before you begin, make sure the following tools are installed:
+
+<CardGroup cols={2}>
+  <Card title=".NET 9 SDK" icon="circle-dot" href="https://dotnet.microsoft.com/en-us/download/dotnet/9.0">
+    Required to build and run Prowl. Download the SDK (not just the runtime) from the official Microsoft page.
+  </Card>
+  <Card title="IDE / Editor" icon="code">
+    Any of the following work: **Visual Studio 2022 v17.8+**, **VS Code** with the C# Dev Kit extension, or **JetBrains Rider**.
+  </Card>
+</CardGroup>
+
+<Note>
+  Make sure you install the **.NET 9 SDK** specifically. Earlier SDK versions are not supported because Prowl uses .NET 9 language features and runtime APIs.
+</Note>
+
+## Installation Steps
+
+<Steps>
+  <Step title="Clone the Repository">
+    Open a terminal and clone the Prowl repository from GitHub. The `--recurse-submodules` flag is optional here because the submodule script in the next step will handle initialization.
+
+    ```bash
+    git clone https://github.com/ProwlEngine/Prowl.git
+    cd Prowl
+    ```
+  </Step>
+
+  <Step title="Initialize External Submodules">
+    Prowl depends on two external submodules located in the `External/` directory:
+
+    - **Prowl.Veldrid** — the cross-platform graphics abstraction layer
+    - **Prowl.DotRecast** — the navmesh and AI pathfinding library
+
+    Run the appropriate initialization script for your platform from the repository root:
+
+    <Tabs>
+      <Tab title="Windows">
+        ```bat
+        UpdateSubmodules.bat
+        ```
+      </Tab>
+      <Tab title="Linux / macOS">
+        ```bash
+        chmod +x UpdateSubmodules.sh
+        ./UpdateSubmodules.sh
+        ```
+      </Tab>
+    </Tabs>
+
+    <Note>
+      If you skip this step the solution will fail to build because the `External/Prowl.Veldrid` and `External/Prowl.DotRecast` project references will be missing.
+    </Note>
+  </Step>
+
+  <Step title="Open the Solution">
+    Open `Prowl.sln` in your IDE of choice. The solution contains several projects; the entry point for the editor is **`Prowl.Editor`**.
+
+    <Tabs>
+      <Tab title="Visual Studio 2022">
+        Double-click `Prowl.sln` in Explorer or use **File → Open → Project/Solution** inside Visual Studio.
+
+        Once the solution loads, right-click **`Prowl.Editor`** in Solution Explorer and choose **Set as Startup Project**.
+      </Tab>
+      <Tab title="VS Code">
+        Open the repository folder in VS Code:
+
+        ```bash
+        code .
+        ```
+
+        Open `Prowl.Editor/Program.cs`, then use the **Run** menu and select **Start Debugging**. Make sure the `Program.cs` file is active in the editor when you launch.
+      </Tab>
+      <Tab title="JetBrains Rider">
+        Open `Prowl.sln` via **File → Open**. In the run configurations dropdown at the top, select **Prowl.Editor** as the startup project.
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Build and Run">
+    Build the solution and run **Prowl.Editor** in either **Debug** or **Release** configuration.
+
+    <Tabs>
+      <Tab title="Debug">
+        Recommended for development. Enables full debugging support, assertions, and detailed error messages.
+
+        ```bash
+        dotnet run --project Prowl.Editor/Prowl.Editor.csproj
+        ```
+      </Tab>
+      <Tab title="Release">
+        Optimized build with the JIT fully warmed up. Useful for performance profiling or when you want the editor to run as fast as possible.
+
+        ```bash
+        dotnet run --project Prowl.Editor/Prowl.Editor.csproj -c Release
+        ```
+      </Tab>
+    </Tabs>
+
+    The editor window opens at 1920×1080 in a maximized state. The title bar shows the active graphics backend — for example, **Prowl Editor - OpenGL** on Windows and Linux, or **Prowl Editor - Metal** on macOS.
+  </Step>
+</Steps>
+
+## Graphics Backend Selection
+
+Prowl automatically selects the best available graphics backend for your platform at startup. You do not need to configure this manually.
+
+| Platform | Primary | Fallbacks |
+|----------|---------|-----------|
+| Windows | OpenGL | Vulkan → DirectX 11 → OpenGL ES |
+| Linux / FreeBSD | OpenGL | Vulkan → OpenGL ES |
+| macOS | Metal | OpenGL → OpenGL ES |
+
+The selected backend is displayed in the editor window title bar every time the editor starts.
+
+<Tip>
+  If the editor fails to open a window, your graphics drivers may not support the primary backend. Updating your GPU drivers usually resolves this.
+</Tip>
+
+## Troubleshooting
+
+<CardGroup cols={2}>
+  <Card title="Build errors about missing projects" icon="triangle-exclamation">
+    Run the submodule initialization script (`UpdateSubmodules.bat` / `UpdateSubmodules.sh`). The `External/` folder must be populated before building.
+  </Card>
+  <Card title="'dotnet' is not recognized" icon="triangle-exclamation">
+    The .NET 9 SDK is not on your system `PATH`. Re-run the SDK installer and make sure the option to add `dotnet` to PATH is selected, then restart your terminal.
+  </Card>
+  <Card title="Editor opens but shows a black screen" icon="triangle-exclamation">
+    This can happen if no project is loaded. The Projects window should appear on startup — create or open a project from there. See the [Project Setup](/getting-started/project-setup) guide.
+  </Card>
+  <Card title="VS Code debugger can't find the launch configuration" icon="triangle-exclamation">
+    Make sure the C# Dev Kit extension is installed and that you have `Program.cs` open as the active file when selecting **Start Debugging** from the Run menu.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Project Setup" icon="folder-open" href="/getting-started/project-setup">
+    Create your first project, understand the folder layout, and add a C# script.
+  </Card>
+  <Card title="Editor Overview" icon="window-restore" href="/getting-started/editor-overview">
+    Learn how the editor windows, docking system, and play controls work.
+  </Card>
+</CardGroup>

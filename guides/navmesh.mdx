@@ -1,0 +1,235 @@
+---
+title: 'Navigation Mesh and AI Agents in Prowl'
+sidebarTitle: 'NavMesh'
+description: 'Bake navigation meshes with NavMeshSurface and move AI agents along computed paths using NavMeshAgent in Prowl Engine via DotRecast.'
+---
+
+Prowl's navigation system is built on [DotRecast](https://github.com/ikpil/DotRecast), a C# port of the industry-standard Recast & Detour libraries. Two components handle everything: `NavMeshSurface` bakes walkable polygonal mesh data from your scene geometry and manages a `DtCrowd` simulation, while `NavMeshAgent` registers a moving entity with that crowd and drives the `GameObject`'s transform along the computed path. Because the underlying library is the same technology used in major commercial engines, you get proven tile-based pathfinding and local obstacle avoidance out of the box.
+
+## NavMeshSurface
+
+`NavMeshSurface` is the scene component that owns the baked navigation data. You add it to any `GameObject` in the scene (the transform of this object defines the local coordinate space used when building the mesh), configure its `BuildSettings`, point it at source geometry, then press **Rebuild** in the Inspector.
+
+### Build Settings
+
+All build parameters live in `NavMeshSurface.BuildSettings`, exposed in the Inspector under `navSettings`.
+
+| Property | Default | Description |
+|---|---|---|
+| `cellSize` | `0.3` | Horizontal voxel resolution (metres). Smaller = finer mesh, higher cost. |
+| `cellHeight` | `0.2` | Vertical voxel resolution (metres). |
+| `agentHeight` | `1.0` | Minimum clearance above the floor the agent requires (metres). |
+| `agentRadius` | `0.5` | Distance from the agent centre to the nearest wall (metres). |
+| `agentMaxClimb` | `0.9` | Maximum step height the agent can climb (metres). |
+| `agentMaxSlope` | `45.0` | Maximum walkable slope (degrees). |
+| `agentMaxAcceleration` | `8.0` | Crowd acceleration (m/s²). |
+| `agentMaxSpeed` | `3.5` | Default crowd maximum speed (m/s). |
+| `tileSize` | `32` | Tile width/height in voxel cells. |
+| `minRegionSize` | `8` | Smallest valid walkable region (voxels²). |
+| `mergedRegionSize` | `20` | Regions smaller than this are merged with neighbours. |
+
+<Note>
+`agentRadius` and `agentHeight` are baked into the mesh at build time. If you have agents of very different sizes, create separate `NavMeshSurface` components with different settings on the same scene.
+</Note>
+
+### Source Geometry
+
+`NavMeshSurface` supports two geometry source modes, selected by the `useStaticGeometry` toggle.
+
+<Tabs>
+  <Tab title="Static Rigidbodies (default)">
+    Collect `Rigidbody3D` components and extract their collider geometry (box, sphere, cylinder, capsule). This avoids loading separate visual meshes and stays in sync with the physics setup.
+
+    ```csharp
+    NavMeshSurface surface = GetComponent<NavMeshSurface>();
+
+    // Use rigidbody colliders as source geometry
+    surface.useStaticGeometry = true;
+
+    // The inspector button "Add All Geometry" populates this list automatically
+    // Alternatively, populate it in code:
+    foreach (var rb in FindObjectsOfType<Rigidbody3D>())
+        surface.staticGeometry.Add(rb);
+
+    // Filter by layer so walkways go in but trigger volumes stay out
+    surface.GeometryLayers = LayerMask.FromLayer(0); // layer 0 only
+    ```
+  </Tab>
+  <Tab title="Mesh Renderers">
+    Use raw `MeshRenderer` visual meshes. Useful when your scene does not have physics set up yet or when the visual mesh matches the walkable surface exactly.
+
+    ```csharp
+    surface.useStaticGeometry = false;
+
+    foreach (var mr in FindObjectsOfType<MeshRenderer>())
+        surface.meshGeometry.Add(mr);
+
+    surface.GeometryLayers = LayerMask.Everything;
+    ```
+  </Tab>
+</Tabs>
+
+### Baking the NavMesh
+
+<Steps>
+  <Step title="Add NavMeshSurface">
+    Add **NavMeshSurface** to a scene-level `GameObject`. The origin of this object becomes the local coordinate frame for pathfinding.
+  </Step>
+  <Step title="Populate geometry">
+    Click **Add All Geometry** in the Inspector to auto-fill `staticGeometry` (or `meshGeometry`) with every eligible object in the open scene.
+  </Step>
+  <Step title="Tune build settings">
+    Adjust `agentRadius`, `agentHeight`, `agentMaxSlope`, and `cellSize` to match the characters that will walk this surface.
+  </Step>
+  <Step title="Rebuild">
+    Click the **Rebuild** button in the Inspector. The engine calls `RebuildNavMesh()`, which voxelises the geometry with DotRecast's `RcBuilder`, partitions regions, builds the detail mesh, and stores a tiled `DtNavMesh` on the component.
+
+    ```csharp
+    // Trigger a bake at runtime (e.g. after procedural level generation)
+    GetComponent<NavMeshSurface>().RebuildNavMesh();
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+`RebuildNavMesh()` is synchronous and can take several hundred milliseconds for large scenes. Call it during a loading screen or offload it to a background task rather than invoking it during gameplay.
+</Warning>
+
+## NavMeshAgent
+
+`NavMeshAgent` attaches to any `GameObject` that should navigate the baked mesh. During `LateUpdate`, it reads the crowd-simulated position from the `DtCrowdAgent` and writes it straight to `Transform.position`.
+
+### Properties
+
+```csharp
+NavMeshAgent agent = GetComponent<NavMeshAgent>();
+
+agent.radius               = 0.5f;   // Physical radius used for crowd separation
+agent.height               = 1.8f;   // Agent height for path clearance
+agent.maxAcceleration      = 8.0f;   // Acceleration (m/s²)
+agent.maxSpeed             = 3.5f;   // Maximum movement speed (m/s)
+agent.collisionQueryRange  = 5.0f;   // Radius for detecting nearby crowd agents
+agent.pathOptimizationRange = 15.0f; // Look-ahead distance for path shortcutting
+```
+
+### Assigning a Surface
+
+Each `NavMeshAgent` must reference the `NavMeshSurface` it navigates. Set the `Surface` property in the Inspector or at runtime:
+
+```csharp
+agent.Surface = FindObjectOfType<NavMeshSurface>();
+```
+
+When `Surface` is set, the agent is automatically registered with the crowd (`NavMeshSurface.RegisterAgent`) as soon as the surface is ready. On `OnDisable` the agent is cleanly unregistered.
+
+### Moving to a Destination
+
+Use `NavMeshSurface.MoveToTarget` to send a specific agent to a world-space position:
+
+```csharp
+NavMeshSurface surface = agent.Surface;
+Vector3 worldDestination = player.Transform.position;
+
+// Convert to the surface's local space, then request move
+RcVec3f localPos = new RcVec3f(
+    (float)worldDestination.x,
+    (float)worldDestination.y,
+    (float)worldDestination.z);
+
+surface.MoveToTarget(agent, localPos, adjust: false);
+```
+
+Setting `adjust: true` asks the crowd to match a target velocity rather than seek a point — useful for kinematic steering or formation movement.
+
+<Tip>
+`NavMeshSurface` also exposes `MoveAllToTarget(pos, adjust)` to command every registered agent to the same destination simultaneously — handy for group rushes or horde AI.
+</Tip>
+
+## Complete Example: Enemy Following the Player
+
+The following script ties together everything covered above. The enemy uses a `NavMeshAgent` to chase the player, updating the destination every second to keep the path fresh without hammering the crowd each frame.
+
+```csharp
+using Prowl.Runtime;
+using DotRecast.Core.Numerics;
+
+public class EnemyChase : MonoBehaviour
+{
+    [SerializeField] private NavMeshSurface navSurface;
+    [SerializeField] private GameObject     player;
+
+    private NavMeshAgent _agent;
+    private float        _updateTimer;
+    private const float  UpdateInterval = 1.0f; // re-path every second
+
+    public override void Awake()
+    {
+        _agent = GetComponent<NavMeshAgent>();
+        _agent.Surface = navSurface;
+
+        // Tune agent movement
+        _agent.maxSpeed        = 3.5f;
+        _agent.maxAcceleration = 12.0f;
+    }
+
+    public override void Update()
+    {
+        if (player == null || navSurface == null || !navSurface.IsReady)
+            return;
+
+        _updateTimer += Time.deltaTimeF;
+        if (_updateTimer < UpdateInterval)
+            return;
+
+        _updateTimer = 0f;
+        SetDestination(player.Transform.position);
+    }
+
+    private void SetDestination(Vector3 worldPos)
+    {
+        // Positions are stored in NavMeshSurface local space
+        Vector3 localPos = navSurface.Transform.InverseTransformPoint(worldPos);
+
+        RcVec3f rcPos = new RcVec3f(
+            (float)localPos.x,
+            (float)localPos.y,
+            (float)localPos.z);
+
+        navSurface.MoveToTarget(_agent, rcPos, adjust: false);
+    }
+}
+```
+
+<Accordion title="Setting up the scene">
+<Steps>
+  <Step title="Bake the surface">
+    Add a `NavMeshSurface` to an empty root `GameObject`, populate geometry, and click **Rebuild**.
+  </Step>
+  <Step title="Add NavMeshAgent to the enemy">
+    Add the **NavMeshAgent** component to your enemy `GameObject`. Assign the `NavMeshSurface` reference in the Inspector.
+  </Step>
+  <Step title="Attach the script">
+    Add the `EnemyChase` script and assign the `navSurface` and `player` fields.
+  </Step>
+  <Step title="Play">
+    Enter Play mode. The enemy will path toward the player, recalculating the route once per second. Crowd avoidance keeps multiple enemies from stacking on top of each other.
+  </Step>
+</Steps>
+</Accordion>
+
+## Architecture Reference
+
+<CardGroup cols={2}>
+  <Card title="DotRecast (Recast)" icon="layer-group">
+    Voxelises geometry, partitions regions, and builds the polygon navigation mesh. Invoked during `RebuildNavMesh()` via `RcBuilder.BuildTiles`.
+  </Card>
+  <Card title="DotRecast (Detour)" icon="route">
+    A* pathfinding on the tiled polygon mesh. `DtNavMeshQuery` finds nearest polygons and computes straight-path corridors for each agent.
+  </Card>
+  <Card title="DtCrowd" icon="users">
+    Simulates all registered agents simultaneously, handling local steering, collision avoidance, and velocity smoothing. Updated every frame inside `NavMeshSurface.Update`.
+  </Card>
+  <Card title="NavMeshSurface" icon="map">
+    Prowl wrapper that owns the `DtNavMesh`, `DtNavMeshQuery`, and `DtCrowd` instances, exposes the `BuildSettings` struct, and bridges agent transforms to the crowd simulation.
+  </Card>
+</CardGroup>

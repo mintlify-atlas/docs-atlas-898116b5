@@ -1,0 +1,344 @@
+---
+title: 'MonoBehaviour Lifecycle Methods in Prowl'
+sidebarTitle: 'Lifecycle'
+description: 'Master the Prowl MonoBehaviour lifecycle: when Awake, Start, Update, LateUpdate, FixedUpdate, OnDestroy, and camera hooks are called and how to use them.'
+---
+
+Every game object behavior in Prowl is driven by a predictable sequence of lifecycle callbacks. When you create a class that extends `MonoBehaviour`, the engine automatically calls these virtual methods at precisely defined moments — from the instant the component is loaded into memory, through every frame of gameplay, all the way to when the object is destroyed. Understanding this order, and knowing which callback is the right tool for each job, is the foundation of writing reliable, bug-free game logic.
+
+## The Lifecycle at a Glance
+
+The table below maps each callback to the moment it fires and what you should use it for.
+
+| Method | When Called | Typical Use |
+|---|---|---|
+| `Awake()` | Once, when the component is first loaded (even if disabled) | Initialize private state, cache component references |
+| `OnEnable()` | Each time the component or its GameObject becomes active | Subscribe to events, reset runtime state |
+| `Start()` | Once, just before the first frame the component runs | Cross-component setup after all Awakes have run |
+| `FixedUpdate()` | Every physics timestep (`Time.fixedDeltaTime`) | Physics forces, deterministic simulation |
+| `Update()` | Every rendered frame | Input reading, game logic, AI |
+| `LateUpdate()` | Every frame, after all `Update()` calls finish | Camera follow, IK, depend-on-update logic |
+| `OnDisable()` | Each time the component or its GameObject becomes inactive | Unsubscribe from events, pause state |
+| `OnDestroy()` | When the component is permanently removed | Final cleanup, releasing unmanaged resources |
+
+<Note>
+`Awake()` fires even if the component starts disabled. `Start()` fires only when the component is enabled and about to tick for the first time. Use this distinction deliberately.
+</Note>
+
+## Initialization Methods
+
+### Awake
+
+`Awake()` is called exactly once when the engine loads your component, regardless of whether it is enabled. Use it to initialize private fields and cache references to components on the **same** GameObject — it is safe because all GameObjects in the scene are guaranteed to exist, but `Start()` has not yet run on any of them.
+
+```csharp
+public class PlayerStats : MonoBehaviour
+{
+    private Rigidbody _rb;
+    private int _health;
+
+    public override void Awake()
+    {
+        // Safe: caches a sibling component before any Start() runs
+        _rb = GetComponent<Rigidbody>();
+        _health = 100;
+    }
+}
+```
+
+### OnEnable and OnDisable
+
+These are called every time the enabled state changes, not just on creation. If your component subscribes to events, `OnEnable` / `OnDisable` is the correct place to manage those subscriptions so you avoid memory leaks.
+
+```csharp
+public class EnemySpawner : MonoBehaviour
+{
+    public override void OnEnable()
+    {
+        // Re-subscribe every time the spawner is activated
+        SceneManager.OnSceneLoaded += HandleSceneLoaded;
+    }
+
+    public override void OnDisable()
+    {
+        // Always unsubscribe to avoid dangling delegates
+        SceneManager.OnSceneLoaded -= HandleSceneLoaded;
+    }
+
+    private void HandleSceneLoaded() { /* ... */ }
+}
+```
+
+### Start
+
+`Start()` runs just before the component's first `Update()`, and crucially, after **all** Awake calls in the scene have completed. This makes it the right place to query references to components on **other** GameObjects, since every object has finished its `Awake()` by this point.
+
+<Warning>
+Calling `GetComponentInChildren<T>()` or referencing other GameObjects in `Awake()` can produce null results if the target component has not yet been loaded. Defer cross-object wiring to `Start()`.
+</Warning>
+
+```csharp
+public class HUDController : MonoBehaviour
+{
+    private PlayerStats _player;
+
+    public override void Start()
+    {
+        // Safe: all Awake() methods have already run
+        var playerGO = GameObject.Find("Player");
+        _player = playerGO.GetComponent<PlayerStats>();
+    }
+}
+```
+
+## Frame-Loop Methods
+
+### Update
+
+`Update()` is the primary per-frame callback. Frame duration varies, so always multiply movement values by `Time.deltaTimeF` to keep behavior frame-rate independent.
+
+```csharp
+public class Rotator : MonoBehaviour
+{
+    public float speed = 90f; // degrees per second
+
+    public override void Update()
+    {
+        Transform.Rotate(Vector3.Up, speed * Time.deltaTimeF);
+    }
+}
+```
+
+### LateUpdate
+
+`LateUpdate()` fires after every `Update()` in the scene has been called for that frame. Use it whenever your logic depends on a value that another component sets during `Update()` — the canonical example is a follow camera.
+
+```csharp
+public class SmoothCamera : MonoBehaviour
+{
+    public Transform target;
+    public float smoothing = 5f;
+
+    public override void LateUpdate()
+    {
+        // The player has already moved in Update(), so we follow correctly
+        Vector3 desired = target.position + new Vector3(0, 5, -10);
+        Transform.position = Vector3.Lerp(
+            Transform.position,
+            desired,
+            smoothing * Time.deltaTimeF
+        );
+    }
+}
+```
+
+### FixedUpdate
+
+`FixedUpdate()` runs at a fixed interval governed by the physics engine (`Time.fixedDeltaTime = 1.0 / PhysicsSettings.TargetFrameRate`). Apply physics forces and other deterministic simulation logic here — never in `Update()`.
+
+```csharp
+public class CarController : MonoBehaviour
+{
+    private Rigidbody _rb;
+    public float acceleration = 15f;
+
+    public override void Awake() => _rb = GetComponent<Rigidbody>();
+
+    public override void FixedUpdate()
+    {
+        float input = Input.GetKey(Key.W) ? 1f : 0f;
+        _rb.AddForce(Transform.Forward * acceleration * input, ForceMode.Acceleration);
+    }
+}
+```
+
+## Destruction Callbacks
+
+### OnDestroy
+
+`OnDestroy()` is called when the component is permanently removed — either because the GameObject is destroyed or `RemoveSelf()` is called. Use it for final cleanup of anything `OnDisable` is not sufficient for (e.g., releasing native handles).
+
+```csharp
+public class NetworkSession : MonoBehaviour
+{
+    private Socket _socket;
+
+    public override void Awake() => _socket = new Socket(/* ... */);
+
+    public override void OnDestroy()
+    {
+        _socket?.Close();
+        _socket?.Dispose();
+    }
+}
+```
+
+<Tip>
+`OnDisable` runs just before `OnDestroy` when a GameObject is destroyed. Keep event unsubscription in `OnDisable` so it also fires on deactivation, and reserve `OnDestroy` for truly final teardown.
+</Tip>
+
+## Scene Loading
+
+```csharp
+public class MusicManager : MonoBehaviour
+{
+    public override void OnLevelWasLoaded()
+    {
+        // Restart the ambient track whenever a new scene loads
+        GetComponent<AudioSource>().Play();
+    }
+}
+```
+
+## Camera Hooks
+
+These methods are called on components attached to the **same** GameObject as a `Camera` component (or any camera that calls the render loop).
+
+<CardGroup cols={2}>
+  <Card title="OnPreCull(Camera)" icon="eye">
+    Called right before the camera determines which objects are visible. Ideal for toggling renderer states before culling.
+  </Card>
+  <Card title="OnPreRender(Camera)" icon="camera">
+    Called after culling but before any geometry is drawn. Use it to set shader globals or configure render state.
+  </Card>
+  <Card title="OnPostRender(Camera)" icon="image">
+    Called after all scene geometry has been drawn to the camera's target. Use it to draw overlays.
+  </Card>
+  <Card title="OnRenderImage(src, dest)" icon="wand-magic-sparkles">
+    Full-screen image-effect callback. Blit `src` to `dest` with a material to apply post-processing.
+  </Card>
+</CardGroup>
+
+```csharp
+public class GrayscaleEffect : MonoBehaviour
+{
+    public Material grayscaleMat;
+
+    // Flip the camera to grayscale after the scene renders
+    public override void OnRenderImage(RenderTexture src, RenderTexture dest)
+    {
+        Graphics.Blit(src, dest, grayscaleMat);
+    }
+}
+```
+
+Use `[ImageEffectOpaque]` to run `OnRenderImage` after opaque geometry but before transparency, and `[ImageEffectAllowedInSceneView]` to also apply it in the editor viewport.
+
+```csharp
+[ImageEffectOpaque]
+[ImageEffectAllowedInSceneView]
+public class DepthOutline : MonoBehaviour
+{
+    public override void OnRenderImage(RenderTexture src, RenderTexture dest) { /* ... */ }
+}
+```
+
+## Immediate-Mode UI
+
+`OnGUI(Gui gui)` is called each frame on any camera with a `GUILayer` component active. Use it to draw runtime HUDs with Prowl's immediate-mode GUI system.
+
+```csharp
+public class ScoreDisplay : MonoBehaviour
+{
+    private int _score = 0;
+
+    public override void OnGUI(Gui gui)
+    {
+        gui.Draw2D.DrawText($"Score: {_score}", 24, new Vector2(20, 20), Color.white);
+    }
+}
+```
+
+## Editor Gizmos
+
+`DrawGizmos()` and `DrawGizmosSelected()` are editor-only callbacks for visualizing data in the Scene view. They are never called in a standalone build.
+
+```csharp
+public class PatrolArea : MonoBehaviour
+{
+    public float radius = 5f;
+
+    // Draws every frame in the editor
+    public override void DrawGizmos()
+    {
+        Gizmos.color = new Color(0, 1, 0, 0.15f);
+        Gizmos.DrawSphere(Transform.position, radius);
+    }
+
+    // Draws only when this GameObject is selected
+    public override void DrawGizmosSelected()
+    {
+        Gizmos.color = Color.green;
+        Gizmos.DrawWireSphere(Transform.position, radius);
+    }
+}
+```
+
+## Controlling Execution Order
+
+By default, the order in which MonoBehaviours update is not guaranteed. Use `[ExecutionOrder(int)]` to set an explicit priority — lower numbers update first.
+
+```csharp
+// Runs before all default-order components
+[ExecutionOrder(-100)]
+public class InputRouter : MonoBehaviour
+{
+    public override void Update() { /* ... */ }
+}
+
+// Runs after all default-order components
+[ExecutionOrder(100)]
+public class DebugOverlay : MonoBehaviour
+{
+    public override void Update() { /* ... */ }
+}
+```
+
+Use `[ExecuteAlways]` to run lifecycle methods in the editor even when the game is not playing — useful for procedural generation or live previews.
+
+```csharp
+[ExecuteAlways]
+public class GridRenderer : MonoBehaviour
+{
+    public override void Update()
+    {
+        // Rebuilds the grid mesh in both edit and play mode
+        RebuildGrid();
+    }
+}
+```
+
+## Full Lifecycle Order Reference
+
+<Steps>
+  <Step title="Awake()">
+    First call on the component. Fires even when disabled. Initialize private state here.
+  </Step>
+  <Step title="OnEnable()">
+    Called immediately after Awake if the component is enabled, or whenever it becomes enabled later.
+  </Step>
+  <Step title="Start()">
+    Called before the first Update, after all Awake calls in the scene. Safe for cross-component references.
+  </Step>
+  <Step title="FixedUpdate()">
+    Physics timestep. May fire multiple times per rendered frame, or not at all, depending on frame timing.
+  </Step>
+  <Step title="Update()">
+    Once per rendered frame. Primary game logic, input, AI.
+  </Step>
+  <Step title="LateUpdate()">
+    Once per rendered frame, after all Updates. Camera follow, dependent transforms.
+  </Step>
+  <Step title="OnPreCull / OnPreRender / OnRenderImage / OnPostRender">
+    Camera render callbacks in pipeline order.
+  </Step>
+  <Step title="OnGUI()">
+    Immediate-mode UI for cameras with GUILayer.
+  </Step>
+  <Step title="OnDisable()">
+    When the component or its GameObject is deactivated. Unsubscribe events here.
+  </Step>
+  <Step title="OnDestroy()">
+    Final teardown when the component is permanently removed.
+  </Step>
+</Steps>

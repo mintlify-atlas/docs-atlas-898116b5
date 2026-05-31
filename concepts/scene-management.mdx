@@ -1,0 +1,215 @@
+---
+title: 'Scene Management and Lifecycle in Prowl'
+sidebarTitle: 'Scenes'
+description: 'Learn how Prowl manages scenes: loading, unloading, instantiating new scenes, and the scene update/render loop driven by SceneManager.'
+---
+
+Prowl organises all live `GameObject`s into a single active **Scene**. The static `SceneManager` class owns that scene, drives the per-frame update/physics/render loop, and provides helpers for loading, unloading, and snapshotting scenes. Understanding the scene lifecycle is essential whether you are writing runtime gameplay code, building editor tooling, or handling play-mode transitions.
+
+## The Scene object
+
+`Scene` extends `EngineObject` and is serialised as a first-class asset (file extension `.prowl`). It holds:
+
+| Member | Purpose |
+|---|---|
+| `AllObjects` | All non-destroyed `GameObject`s registered in the scene |
+| `ActiveObjects` | Objects that are non-destroyed **and** `enabledInHierarchy` |
+| `RootObjects` | Top-level objects with no parent |
+| `SaveableObjects` | Objects not marked with `HideFlags.DontSave` |
+| `Count` | Total number of registered objects |
+| `Fog` | `FogParams` struct (mode, colour, density) |
+| `Ambient` | `AmbientLightParams` struct (uniform or hemisphere lighting) |
+
+### FogParams
+
+```csharp
+scene.Fog = new Scene.FogParams
+{
+    Mode    = Scene.FogParams.FogMode.ExponentialSquared,
+    Color   = new Vector4(0.6f, 0.6f, 0.7f, 1.0f),
+    Density = 0.02f
+};
+```
+
+The `FogMode` enum includes `Off`, `Linear`, `Exponential`, and `ExponentialSquared`. For `Linear` mode, `Start` and `End` distances are exposed.
+
+### AmbientLightParams
+
+```csharp
+scene.Ambient = new Scene.AmbientLightParams
+{
+    Mode       = Scene.AmbientLightParams.AmbientMode.Hemisphere,
+    SkyColor   = new Vector4(0.3f, 0.35f, 0.45f, 1.0f),
+    GroundColor = new Vector4(0.15f, 0.1f, 0.1f, 1.0f)
+};
+```
+
+---
+
+## SceneManager — the static controller
+
+`SceneManager` (namespace `Prowl.Runtime.SceneManagement`) is the central hub for scene operations.
+
+```csharp
+// Read the active scene
+Scene active = SceneManager.Scene;
+
+// Or as an AssetRef<Scene>
+AssetRef<Scene> sceneRef = SceneManager.Current;
+```
+
+### Loading a scene
+
+```csharp
+// From a live Scene object
+SceneManager.LoadScene(myScene);
+
+// From an asset reference (throws if not available)
+AssetRef<Scene> sceneRef = Application.AssetProvider.LoadAsset<Scene>(sceneGuid);
+SceneManager.LoadScene(sceneRef);
+```
+
+`LoadScene` calls `Clear()` on the current scene, sets the new scene as `Current`, resolves prefab links with `HandlePrefabs()`, invokes `OnSceneLoadAttribute` callbacks, and then calls `OnLevelWasLoaded()` on every active `MonoBehaviour`.
+
+### Creating a blank scene
+
+```csharp
+// Wipes the current scene and adds a directional light + default camera
+SceneManager.InstantiateNewScene();
+```
+
+### Clearing the scene
+
+```csharp
+// Destroys all GameObjects and resets Current to an empty Scene
+SceneManager.Clear();
+```
+
+`Clear()` triggers `OnSceneUnloadAttribute` callbacks and correctly resets `Camera.Main` before disposal.
+
+---
+
+## The update/render loop
+
+Each frame the engine calls three methods on `SceneManager`:
+
+<Steps>
+  <Step title="SceneManager.Update()">
+    Iterates all active `GameObject`s and:
+
+    1. Calls `PreUpdate()` — runs `Awake()` and `Start()` on any component that hasn't awoken/started yet.
+    2. Runs the physics simulation (play mode only).
+    3. Calls `Update()` and advances coroutines for every enabled `MonoBehaviour`.
+    4. Calls `LateUpdate()` on every enabled `MonoBehaviour`.
+    5. Advances end-of-frame coroutines.
+  </Step>
+  <Step title="SceneManager.PhysicsUpdate()">
+    Called on a fixed timestep. Iterates active `GameObject`s and calls `FixedUpdate()` plus fixed-update coroutines on each enabled `MonoBehaviour`.
+  </Step>
+  <Step title="SceneManager.Draw(RenderTexture? target)">
+    Collects all `Camera` components from active objects, sorts them by `Depth`, and calls the appropriate `RenderPipeline.Render()` for each. Returns `false` if no cameras are found.
+  </Step>
+</Steps>
+
+### ForeachComponent utility
+
+`SceneManager.ForeachComponent` is a convenience helper used internally — and usable from your own systems — to iterate all enabled components in a set of objects:
+
+```csharp
+var activeGOs = SceneManager.Scene.ActiveObjects.ToList();
+
+SceneManager.ForeachComponent(activeGOs, component =>
+{
+    // runs only if component.EnabledInHierarchy
+    component.Do(component.Update);
+});
+```
+
+---
+
+## Play mode: StoreScene and RestoreScene
+
+The editor uses a snapshot mechanism so play mode changes do not permanently modify your scene data.
+
+```csharp
+// Before entering play mode — serialises the scene to memory
+SceneManager.StoreScene();
+
+// ... play mode runs ...
+
+// After exiting play mode — deserialises and restores the original state
+SceneManager.RestoreScene();
+
+// If play mode is cancelled without restoring
+SceneManager.ClearStoredScene();
+```
+
+`RestoreScene` deserialises the stored `EchoObject` snapshot into a fresh `Scene`, re-applies prefab links, and fires `OnSceneLoadAttribute` callbacks so engine systems re-initialise correctly.
+
+<Warning>
+`StoreScene` asserts that no scene is already stored. Always pair every `StoreScene` call with exactly one `RestoreScene` or `ClearStoredScene`.
+</Warning>
+
+---
+
+## Manually managing scene contents
+
+You can add and remove `GameObject`s from any `Scene` directly:
+
+```csharp
+Scene scene = SceneManager.Scene;
+
+// Register a GameObject (and all of its children)
+scene.Add(myGameObject);
+
+// Unregister — removes from parent and clears the Scene reference
+scene.Remove(myGameObject);
+
+// Unregister everything
+scene.Clear();
+
+// Remove destroyed objects without running dispose callbacks
+scene.Flush();
+```
+
+---
+
+## OnSceneLoad and OnSceneUnload callbacks
+
+Static methods decorated with `[OnSceneLoad]` or `[OnSceneUnload]` are automatically discovered and invoked by `SceneManager` at the appropriate moment:
+
+```csharp
+using Prowl.Runtime.Utils;
+
+public static class GameSystems
+{
+    [OnSceneLoad]
+    public static void InitSystems()
+    {
+        Debug.Log("Scene loaded — initialising game systems.");
+    }
+
+    [OnSceneUnload]
+    public static void ShutdownSystems()
+    {
+        Debug.Log("Scene unloading — cleaning up.");
+    }
+}
+```
+
+These attributes accept an optional `order` integer to control invocation sequence across multiple callbacks.
+
+---
+
+## Scene serialisation
+
+`Scene` implements `ISerializationCallbackReceiver`. Before serialisation it flattens `AllObjects` into a `GameObject[]`; after deserialisation it re-registers each object via `Add()` so parent-child relationships are reconstructed correctly. The serialisation format is Prowl's own **Echo** tag format (human-readable text by default).
+
+```csharp
+// Save the active scene to disk (editor helper)
+AssetDatabase.SaveAsset(SceneManager.Scene);
+```
+
+<Note>
+Only `SaveableObjects` are written; GameObjects with `HideFlags.DontSave` or `HideFlags.HideAndDontSave` are excluded automatically.
+</Note>

@@ -1,0 +1,280 @@
+---
+title: 'Post-Processing Effects in Prowl Engine'
+sidebarTitle: 'Post-Processing'
+description: 'Apply post-processing image effects in Prowl: Bloom, Motion Blur, SSAO, and Tone Mapping via MonoBehaviour image effect components on the camera.'
+---
+
+Post-processing in Prowl is implemented as plain `MonoBehaviour` components that live on the same `GameObject` as a `Camera`. The `DefaultRenderPipeline` inspects those components at render time, discovers any that override `OnRenderImage`, and ping-pongs them through a temporary `RenderTexture` pair. No special registration step is needed — add the component, configure its properties, and it runs automatically. Four built-in effects ship with the engine: `KawaseBloomEffect`, `MotionBlurEffect`, `SSAOEffect`, and `ToneMapperEffect`.
+
+## How OnRenderImage Works
+
+The rendering pipeline runs image effects in two groups each frame:
+
+1. **Opaque effects** — components marked `[ImageEffectOpaque]` run *before* the transparent geometry pass
+2. **Final effects** — all other `OnRenderImage` components run *after* transparent geometry
+
+Both groups use a ping-pong pattern: each effect receives the current result as `src` and a temporary buffer as `dest`. After all effects have run, the final `dest` is blitted to the camera's output target.
+
+```csharp
+// The signature every image effect overrides
+public override void OnRenderImage(RenderTexture src, RenderTexture dest)
+{
+    // Always write to dest — never read from dest or skip the blit
+    Graphics.Blit(src, dest, myMaterial);
+}
+```
+
+<Warning>
+You must always write something to `dest` inside `OnRenderImage`. If you return without blitting, the pipeline will blit a garbage or empty buffer to the screen for every subsequent effect in the chain.
+</Warning>
+
+## Effect Attributes
+
+Three attributes control how the pipeline treats an `OnRenderImage` component:
+
+<CardGroup cols={3}>
+  <Card title="[ImageEffectOpaque]" icon="layer-group">
+    Runs the effect between the opaque and transparent passes. Use this for effects that must read depth (SSAO, ambient occlusion), because the depth buffer is fully populated after opaque geometry.
+  </Card>
+  <Card title="[ImageEffectAllowedInSceneView]" icon="eye">
+    Lets the effect run in the editor Scene View camera. Without this attribute, effects are skipped in the editor viewport.
+  </Card>
+  <Card title="[ImageEffectTransformsToLDR]" icon="circle-half-stroke">
+    Signals that this effect outputs an LDR (8-bit) buffer. The pipeline switches the working format from `R16_G16_B16_A16_Float` to `R8_G8_B8_A8_UNorm` after this effect runs. Always use this on your tone mapper.
+  </Card>
+</CardGroup>
+
+## KawaseBloomEffect
+
+`KawaseBloomEffect` implements a multi-pass Kawase blur bloom. It extracts bright pixels above `Threshold`, performs iterative dual Kawase blur passes, then composites the bloom on top of the source image.
+
+```csharp
+KawaseBloomEffect bloom = cameraObject.AddComponent<KawaseBloomEffect>();
+
+bloom.resolution  = KawaseBloomEffect.Resolution.Quarter; // Half, Quarter, or Eighth
+bloom.Iterations  = 4;        // More passes = wider bloom spread
+bloom.Radius      = 16.0f;    // Initial sample radius in pixels
+bloom.Threshold   = 1.0f;     // Luminance threshold (HDR value — set > 1 for HDR cameras)
+bloom.Intensity   = 1.2f;     // Bloom composite intensity
+bloom.SoftKnee    = 0.5f;     // [0–1] Smooth threshold transition width
+bloom.UseBlur     = true;     // Applies an additional separable Gaussian blur pass
+```
+
+### Resolution modes
+
+| Value | Scale | Notes |
+|---|---|---|
+| `Full` | 1× | Full resolution — best quality, most expensive |
+| `Half` | 0.5× | Good balance for HD resolutions |
+| `Quarter` | 0.25× | Default — suitable for most games |
+| `Eighth` | 0.125× | Cheapest; only usable at very high base resolutions |
+
+<Tip>
+For HDR cameras (`Camera.HDR = true`), set `Threshold` above `1.0` to limit bloom to genuinely bright emissive surfaces. A value of `1.0` at LDR brightens all mid-tones noticeably.
+</Tip>
+
+### How it works internally
+
+```csharp
+// Pass 0: Threshold extraction — src → tempA
+Graphics.Blit(src, tempA, bloomMaterial, 0);
+
+// Passes 1–N: Dual Kawase blur — ping-pong between tempA and tempB
+for (int i = 0; i < Iterations; i++)
+{
+    bloomMaterial.SetFloat("_Offset", initialOffset / Math.Pow(2, i));
+    Graphics.Blit(i % 2 == 0 ? tempA : tempB,
+                  i % 2 == 0 ? tempB : tempA,
+                  bloomMaterial, 1);
+}
+
+// Optional separable Gaussian blur
+Graphics.Blit(tempB, tempA, bloomMaterial, 2); // Horizontal
+Graphics.Blit(tempA, tempB, bloomMaterial, 3); // Vertical
+
+// Final composite — blend bloom with original source
+bloomMaterial.SetTexture("_BloomTex", tempB);
+Graphics.Blit(src, dest, bloomMaterial, 4);
+```
+
+## MotionBlurEffect
+
+`MotionBlurEffect` samples the `_CameraMotionVectorsTexture` to reconstruct per-pixel velocity and accumulates samples along the motion path.
+
+```csharp
+MotionBlurEffect blur = cameraObject.AddComponent<MotionBlurEffect>();
+blur.Intensity    = 0.3f;  // Blend weight of motion blur samples (0 = off, 1 = full)
+blur.SampleCount  = 8;     // Number of samples along the velocity vector
+```
+
+The effect requests motion vector generation by setting a flag on the camera in `OnPreCull`:
+
+```csharp
+public override void OnPreCull(Camera camera)
+{
+    // Causes the pipeline to render a motion vector buffer
+    // and expose it as _CameraMotionVectorsTexture
+    camera.DepthTextureMode |= DepthTextureMode.MotionVectors;
+}
+```
+
+<Note>
+`MotionBlurEffect` requires a `Camera` component on the same `GameObject` — it is decorated with `[RequireComponent(typeof(Camera))]`. Adding the effect to a non-camera object will automatically add a camera as well.
+</Note>
+
+## SSAOEffect
+
+`SSAOEffect` (Screen-Space Ambient Occlusion) reads the depth buffer to estimate how much ambient light each pixel receives, darkening corners and crevices. It is marked `[ImageEffectOpaque]`, so it runs before transparent geometry.
+
+```csharp
+SSAOEffect ssao = cameraObject.AddComponent<SSAOEffect>();
+ssao.Radius      = 0.5f;   // Occlusion sample hemisphere radius in view space
+ssao.Intensity   = 1.25f;  // Strength multiplier (1 = physically neutral)
+ssao.SampleCount = 16;     // [4–32] Hemisphere samples — higher = less noise
+ssao.MaxDistance = 100f;   // Occluders beyond this distance are ignored
+```
+
+Because `SSAOEffect` is `[ImageEffectOpaque]`, it runs *before* transparency and *before* the tone mapper — important for correct compositing over the opaque scene.
+
+```csharp
+// SSAOEffect requests the depth pre-pass automatically
+public override void OnPreCull(Camera camera)
+{
+    camera.DepthTextureMode |= DepthTextureMode.Depth; // Enables _CameraDepthTexture
+}
+```
+
+<Warning>
+SSAO reads the camera's projection matrix each frame (`s_ssao.SetMatrix("_ProjectionMatrix", cam.ProjectionMatrix.ToFloat())`). If you use a custom `ProjectionMatrix` on the camera, ensure it is set before `OnRenderImage` is called (i.e., before the render pipeline invokes opaque effects).
+</Warning>
+
+## ToneMapperEffect
+
+`ToneMapperEffect` converts the HDR linear light buffer to a displayable LDR image. It is marked `[ImageEffectTransformsToLDR]`, signalling to the pipeline that the format switches from float16 to `R8_G8_B8_A8_UNorm` after this effect runs. **Always place ToneMapperEffect last in the effect stack**, or at minimum after all HDR-aware effects.
+
+```csharp
+ToneMapperEffect tonemap = cameraObject.AddComponent<ToneMapperEffect>();
+tonemap.Contrast   = 1.0f;  // [0–2] S-curve contrast adjustment
+tonemap.Saturation = 1.0f;  // [0–2] Color saturation adjustment
+```
+
+<Tip>
+The underlying `ToneMapper.shader` uses ACES (Academy Color Encoding System) filmic tone mapping — the same algorithm used in high-end film production. Values above 1.0 on `Contrast` push colors toward deeper blacks and brighter highlights, while values below 1.0 produce a flatter, more desaturated look.
+</Tip>
+
+## Stacking Multiple Effects
+
+Effects execute in the order `GameObject.GetComponents<MonoBehaviour>()` returns them, which matches the order they were added to the `GameObject`. A typical HDR camera stack looks like:
+
+<Steps>
+  <Step title="SSAOEffect (opaque)">
+    Runs first, before transparency, because of `[ImageEffectOpaque]`. Darkens corners and contact shadows.
+  </Step>
+  <Step title="KawaseBloomEffect (final)">
+    Runs after transparency. Extracts and spreads bright emissive pixels across the HDR buffer.
+  </Step>
+  <Step title="MotionBlurEffect (final)">
+    Smears pixels along their motion vectors using the velocity buffer.
+  </Step>
+  <Step title="ToneMapperEffect (final, LDR conversion)">
+    Must be last among final effects. Converts float16 HDR to 8-bit LDR with ACES tone mapping.
+  </Step>
+</Steps>
+
+```csharp
+// The default scene created by SceneManager.InstantiateDefaultScene()
+// sets up this exact stack:
+Camera cam = cameraObject.AddComponent<Camera>();
+cam.HDR = true;
+
+cameraObject.AddComponent<MotionBlurEffect>();
+cameraObject.AddComponent<KawaseBloomEffect>();
+cameraObject.AddComponent<ToneMapperEffect>();
+```
+
+## Writing a Custom Post-Processing Effect
+
+Use `Graphics.Blit()` to apply a custom material to a fullscreen quad, or create your own `CommandBuffer` pipeline for more control.
+
+```csharp
+[ImageEffectAllowedInSceneView]
+public class ScanlineEffect : MonoBehaviour
+{
+    private Material _material;
+
+    public float LineFrequency = 150f;
+    public float Intensity = 0.15f;
+
+    public override void OnEnable()
+    {
+        Shader shader = Application.AssetProvider.LoadAsset<Shader>("Shaders/Scanline.shader");
+        _material = new Material(shader);
+    }
+
+    public override void OnRenderImage(RenderTexture src, RenderTexture dest)
+    {
+        if (_material == null) { Graphics.Blit(src, dest); return; }
+
+        _material.SetFloat("_LineFrequency", LineFrequency);
+        _material.SetFloat("_Intensity", Intensity);
+        _material.SetVector("_Resolution",
+            new System.Numerics.Vector2(src.Width, src.Height));
+
+        // Always blit from src to dest using your material
+        Graphics.Blit(src, dest, _material);
+    }
+}
+```
+
+### Using Temporary Render Textures
+
+For multi-pass effects that need intermediate buffers, request them from the pool:
+
+```csharp
+public override void OnRenderImage(RenderTexture src, RenderTexture dest)
+{
+    // Allocate a temporary RT matching the source format
+    RenderTexture temp = RenderTexture.GetTemporaryRT(
+        src.Width, src.Height,
+        new[] { src.ColorBuffers[0].Format });
+
+    // First pass: horizontal blur
+    _material.SetFloat("_Direction", 0f);
+    Graphics.Blit(src, temp, _material);
+
+    // Second pass: vertical blur → final dest
+    _material.SetFloat("_Direction", 1f);
+    Graphics.Blit(temp, dest, _material);
+
+    // Always release temporary RTs when done
+    RenderTexture.ReleaseTemporaryRT(temp);
+}
+```
+
+## Quick Reference
+
+<Accordion title="Effect attribute summary">
+  | Attribute | Class used on | Effect on pipeline |
+  |---|---|---|
+  | `[ImageEffectOpaque]` | `SSAOEffect` | Runs between opaque and transparent passes |
+  | `[ImageEffectTransformsToLDR]` | `ToneMapperEffect` | Pipeline switches working RT format from HDR to LDR |
+  | `[ImageEffectAllowedInSceneView]` | All four built-in effects | Effect also runs when the Scene View camera renders |
+  | `[RequireComponent(typeof(Camera))]` | `MotionBlurEffect`, `SSAOEffect`, `ToneMapperEffect` | Automatically adds a Camera component if missing |
+</Accordion>
+
+<Accordion title="DepthTextureMode flags">
+  Effects that need auxiliary buffers must request them in `OnPreCull`. The flag is cleared at end of frame.
+
+  | Flag | Exposes | Used by |
+  |---|---|---|
+  | `DepthTextureMode.Depth` | `_CameraDepthTexture` | SSAO, custom depth effects |
+  | `DepthTextureMode.MotionVectors` | `_CameraMotionVectorsTexture` | Motion blur, TAA |
+
+  ```csharp
+  public override void OnPreCull(Camera camera)
+  {
+      camera.DepthTextureMode |= DepthTextureMode.Depth;
+      camera.DepthTextureMode |= DepthTextureMode.MotionVectors;
+  }
+  ```
+</Accordion>

@@ -1,0 +1,273 @@
+---
+title: 'Camera Setup and Rendering in Prowl Engine'
+sidebarTitle: 'Camera'
+description: 'Configure Prowl cameras for perspective and orthographic rendering, set field of view, culling masks, and assign custom render pipelines to cameras.'
+---
+
+The `Camera` component is the entry point for all rendering in Prowl. Every frame, `SceneManager.Draw()` collects every active `Camera` in the scene, sorts them by their `Depth` property, and calls the camera's associated `RenderPipeline.Render()` — producing a fully composited image including lighting, shadows, post-processing, and GUI. Understanding how cameras work is fundamental to building anything visual: from a simple single-view game to a split-screen HUD, a minimap, or a cinematic cutscene system.
+
+## Adding a Camera
+
+Add a `Camera` component to any `GameObject` from the **Rendering → Camera** menu in the editor, or do it in code:
+
+```csharp
+GameObject camObject = new GameObject("Main Camera");
+camObject.tag = "Main Camera";          // Camera.Main searches for this tag
+camObject.Transform.position = new Vector3(0, 1, -10);
+
+Camera cam = camObject.AddComponent<Camera>();
+cam.FieldOfView   = 60f;
+cam.NearClipPlane = 0.01f;
+cam.FarClipPlane  = 1000f;
+cam.Depth         = 0;        // Lower values render first
+cam.HDR           = true;
+```
+
+<Note>
+`Camera.Main` returns the first camera tagged `"Main Camera"`, or the first `Camera` found in the scene if no tag match exists. The result is cached with a `WeakReference` and re-queried automatically when the reference becomes invalid.
+</Note>
+
+## Projection Modes
+
+Cameras support two projection types controlled by `Camera.projectionType`.
+
+<Tabs>
+  <Tab title="Perspective">
+    Perspective projection simulates natural depth — objects further away appear smaller. This is the standard mode for 3D games.
+
+    ```csharp
+    cam.projectionType = Camera.ProjectionType.Perspective;
+    cam.FieldOfView    = 75f;   // Vertical FOV in degrees
+    cam.NearClipPlane  = 0.05f;
+    cam.FarClipPlane   = 500f;
+    ```
+  </Tab>
+  <Tab title="Orthographic">
+    Orthographic projection has no perspective foreshortening — useful for 2D games, UI cameras, top-down strategy views, and shadow casting.
+
+    ```csharp
+    cam.projectionType   = Camera.ProjectionType.Orthographic;
+    cam.OrthographicSize = 5f;  // Half-height of the view in world units
+    cam.NearClipPlane    = 0.01f;
+    cam.FarClipPlane     = 100f;
+    ```
+  </Tab>
+</Tabs>
+
+## Core Camera Properties
+
+<CardGroup cols={2}>
+  <Card title="FieldOfView" icon="eye">
+    Vertical field of view in degrees (perspective mode only). Typical values range from 50° to 90°. Use `Camera.IsOrthographic` to check the active mode.
+  </Card>
+  <Card title="NearClipPlane / FarClipPlane" icon="arrows-left-right">
+    Objects closer than `NearClipPlane` or farther than `FarClipPlane` are not rendered. Keep the ratio `Far/Near` as small as practical to avoid depth precision issues.
+  </Card>
+  <Card title="Depth" icon="layer-group">
+    Render order among multiple cameras. `SceneManager.Draw()` sorts cameras ascending by `Depth`. Cameras with lower `Depth` render first (i.e., behind higher-depth cameras).
+  </Card>
+  <Card title="CullingMask" icon="filter">
+    A `LayerMask` that controls which object layers this camera renders. Use it to exclude UI objects from a world camera, or to dedicate a second camera purely to UI.
+  </Card>
+  <Card title="RenderScale" icon="expand">
+    Scales the internal render resolution relative to the target framebuffer. `1.0` is native resolution; `0.5` renders at half resolution for performance; `2.0` for supersampling.
+  </Card>
+  <Card title="HDR" icon="sun">
+    When enabled, the forward buffer uses a 16-bit float format (`R16_G16_B16_A16_Float`) instead of 8-bit (`R8_G8_B8_A8_UNorm`), enabling physically based lighting ranges and Bloom.
+  </Card>
+</CardGroup>
+
+## Clear Flags
+
+`CameraClearFlags` controls what happens to the framebuffer before rendering begins each frame.
+
+| Value | Description |
+|---|---|
+| `Skybox` | Clears depth and color, then renders the procedural sky (default) |
+| `DepthColor` | Clears both depth and color to `ClearColor` |
+| `ColorOnly` | Clears only color — depth persists from the previous frame |
+| `DepthOnly` | Clears only depth — reveals the previous color below this camera |
+| `None` | No clearing at all — stacks on whatever was rendered before |
+
+```csharp
+// Render a solid background color instead of a sky
+cam.ClearFlags = CameraClearFlags.DepthColor;
+cam.ClearColor = new Color(0.1f, 0.1f, 0.2f, 1f);
+```
+
+## Render Targets
+
+By default a camera renders to the screen swapchain. Assign a `RenderTexture` to `Camera.Target` to redirect output — useful for minimap cameras, security-camera monitors, or reflection probes.
+
+```csharp
+// Create a render texture at 512×512 with an HDR color buffer
+RenderTexture minimapRT = new RenderTexture(512, 512,
+    new[] { Veldrid.PixelFormat.R8_G8_B8_A8_UNorm },
+    Veldrid.PixelFormat.D16_UNorm);
+
+Camera minimapCam = minimapObject.AddComponent<Camera>();
+minimapCam.Target = minimapRT;
+minimapCam.Depth  = -2;       // Render before the main camera
+
+// Use the render texture on a material to display it on a mesh
+monitorMaterial.SetTexture("_AlbedoTex", minimapRT);
+```
+
+<Warning>
+A `RenderTexture` assigned to `Camera.Target` must stay alive as long as the camera is active. Releasing the texture while the camera references it will cause a GPU resource error on the next frame.
+</Warning>
+
+## Render Pipelines
+
+Every camera uses a `RenderPipeline` asset to define how the scene is rendered. If `Camera.Pipeline` is not assigned, `DefaultRenderPipeline.Default` is used automatically. The pipeline is called once per camera per frame by `SceneManager.Draw()`.
+
+```csharp
+// SceneManager.Draw() — the exact loop that runs each frame
+foreach (Camera cam in cameras)  // sorted by Depth
+{
+    RenderPipeline pipeline = cam.Pipeline.Res ?? DefaultRenderPipeline.Default;
+    pipeline.Render(cam, new RenderingData());
+}
+```
+
+### Creating a Custom Render Pipeline
+
+Subclass `RenderPipeline` and override `Render` to implement entirely custom rendering logic:
+
+```csharp
+public class WireframeRenderPipeline : RenderPipeline
+{
+    public override void Render(Camera camera, in RenderingData data)
+    {
+        Veldrid.Framebuffer target = camera.UpdateRenderData();
+        CommandBuffer cmd = CommandBufferPool.Get("Wireframe");
+
+        cmd.SetRenderTarget(target);
+        cmd.ClearRenderTarget(true, true, Color.black);
+
+        // Draw all batches using only their ShadowCaster pass as a wireframe stand-in
+        foreach (RenderBatch batch in EnumerateBatches())
+        {
+            cmd.ApplyPropertyState(batch.material._properties);
+            foreach (ShaderPass pass in batch.material.Shader.Res.Passes)
+            {
+                cmd.SetPass(pass);
+                cmd.BindResources();
+                foreach (int idx in batch.renderIndices)
+                {
+                    IRenderable r = GetRenderable(idx);
+                    r.GetRenderingData(out PropertyState props, out IGeometryDrawData draw, out Matrix4x4 model);
+                    cmd.ApplyPropertyState(props);
+                    cmd.SetMatrix("prowl_ObjectToWorld", model.ToFloat());
+                    cmd.UpdateBuffer("_PerDraw");
+                    cmd.SetDrawData(draw);
+                    cmd.DrawIndexed((uint)draw.IndexCount, 0, 1, 0, 0);
+                }
+            }
+        }
+
+        Graphics.SubmitCommandBuffer(cmd);
+        CommandBufferPool.Release(cmd);
+    }
+}
+```
+
+Assign the pipeline asset to your camera in the Inspector or via code:
+
+```csharp
+cam.Pipeline = Application.AssetProvider.LoadAsset<RenderPipeline>("MyPipelines/Wireframe.asset");
+```
+
+## Multiple Cameras and Render Order
+
+<Steps>
+  <Step title="Assign unique Depth values">
+    Set `camera.Depth` so cameras render in the correct order. For example, a world camera at `Depth = 0` and a HUD camera at `Depth = 10`.
+  </Step>
+  <Step title="Configure ClearFlags per camera">
+    The HUD camera should use `CameraClearFlags.DepthOnly` so the world render below shows through. The world camera uses `CameraClearFlags.Skybox` to paint the background.
+  </Step>
+  <Step title="Use CullingMask to separate concerns">
+    Put HUD meshes on a dedicated layer (e.g., layer 31 named `"UI3D"`). Set the world camera's `CullingMask` to exclude that layer, and the HUD camera to include only it.
+  </Step>
+</Steps>
+
+```csharp
+// World camera
+Camera worldCam = worldObject.AddComponent<Camera>();
+worldCam.Depth       = 0;
+worldCam.ClearFlags  = CameraClearFlags.Skybox;
+worldCam.CullingMask = LayerMask.Everything & ~LayerMask.GetMask("UI3D");
+
+// HUD camera — renders on top
+Camera hudCam = hudObject.AddComponent<Camera>();
+hudCam.Depth       = 10;
+hudCam.ClearFlags  = CameraClearFlags.DepthOnly;
+hudCam.CullingMask = LayerMask.GetMask("UI3D");
+```
+
+## MonoBehaviour Camera Hooks
+
+MonoBehaviour components on the same `GameObject` as the camera receive rendering callbacks in the order the pipeline calls them. These hooks let effects and systems observe or modify each rendering phase.
+
+| Callback | When it fires |
+|---|---|
+| `OnPreCull(Camera camera)` | Before the camera culls renderables — use it to force `DepthTextureMode` flags |
+| `OnPreRender(Camera camera)` | After culling, just before geometry is drawn |
+| `OnPostRender(Camera camera)` | After all rendering for the camera is complete |
+| `OnRenderImage(RenderTexture src, RenderTexture dest)` | Post-processing — blit from `src` to `dest` |
+
+```csharp
+public class FogColorOverride : MonoBehaviour
+{
+    public Color fogColor = Color.gray;
+
+    public override void OnPreRender(Camera camera)
+    {
+        // Override fog color just before this camera renders
+        Material.SetGlobalVector("prowl_FogColor", fogColor);
+    }
+
+    public override void OnPostRender(Camera camera)
+    {
+        // Restore default or allow the pipeline to reset globals
+    }
+}
+```
+
+## GPU Projection Matrix
+
+Prowl targets multiple graphics backends (OpenGL, Vulkan, Direct3D 11). Each backend has a different NDC (Normalized Device Coordinate) convention. Use `Graphics.GetGPUProjectionMatrix()` whenever you build a projection matrix that will be uploaded to the GPU:
+
+```csharp
+// Correct — flips Y on DX11 automatically
+Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(
+    cam.FieldOfView.ToRad(), cam.Aspect, cam.NearClipPlane, cam.FarClipPlane);
+proj = Graphics.GetGPUProjectionMatrix(proj);
+
+// Then upload to a shader
+Material.SetGlobalMatrix("_CustomProjection", proj.ToFloat());
+```
+
+<Tip>
+`Camera.ProjectionMatrix` and `Camera.NonJitteredProjectionMatrix` are already corrected for the GPU coordinate system when set by `Camera.UpdateRenderData()`. Only call `Graphics.GetGPUProjectionMatrix()` manually when building custom matrices yourself.
+</Tip>
+
+## Depth Texture Mode
+
+Some post-processing effects (like SSAO and Motion Blur) need the camera to generate auxiliary buffers each frame. Request them via `DepthTextureMode` flags — typically inside `OnPreCull`:
+
+```csharp
+public override void OnPreCull(Camera camera)
+{
+    // Request a pre-depth pass: exposes _CameraDepthTexture in shaders
+    camera.DepthTextureMode |= DepthTextureMode.Depth;
+
+    // Request motion vectors: exposes _CameraMotionVectorsTexture in shaders
+    camera.DepthTextureMode |= DepthTextureMode.MotionVectors;
+}
+```
+
+<Note>
+`DepthTextureMode` is reset at the end of each frame by the render pipeline. Components that need these buffers should set the flags every frame inside `OnPreCull`, not once in `OnEnable`.
+</Note>

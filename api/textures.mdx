@@ -1,0 +1,321 @@
+---
+title: 'Texture Types and RenderTexture in Prowl'
+sidebarTitle: 'Textures'
+description: 'Reference for Prowl texture types: Texture2D, Texture3D, TextureCubemap, Texture2DArray, RenderTexture, and TextureSampler configuration.'
+---
+
+Prowl's texture system is built on top of Veldrid and provides strongly-typed wrappers for every GPU texture variety. The abstract `Texture` base class handles resource creation, mipmap generation, CPU-to-GPU data upload, and GPU-to-CPU readback. Concrete types — `Texture2D`, `RenderTexture`, and others — add dimension-specific APIs. `RenderTexture` is the engine's off-screen render target, pairing colour and depth `Texture2D` buffers with a Veldrid `Framebuffer` and a pool system for temporary allocations. Every texture carries a `TextureSampler` that controls filtering and address-mode behaviour at the shader level.
+
+## Texture (abstract base)
+
+All texture types inherit from `Texture`, which lives in `Prowl.Runtime.Rendering`.
+
+### Properties
+
+<ResponseField name="Type" type="TextureType">
+  The Veldrid texture dimensionality: `Texture1D`, `Texture2D`, `Texture3D`, or `Texture2DArray`.
+</ResponseField>
+
+<ResponseField name="Format" type="PixelFormat">
+  The GPU pixel format (e.g., `R8_G8_B8_A8_UNorm`, `R32_G32_B32_A32_Float`).
+</ResponseField>
+
+<ResponseField name="Usage" type="TextureUsage">
+  Veldrid usage flags: `Sampled`, `RenderTarget`, `DepthStencil`, `Storage`, `GenerateMipmaps`, `Staging`.
+</ResponseField>
+
+<ResponseField name="MipLevels" type="uint">
+  Number of mip levels allocated for this texture.
+</ResponseField>
+
+<ResponseField name="IsMipmapped" type="bool">
+  `true` after `GenerateMipmaps()` has been called. Resets to `false` if the texture is recreated.
+</ResponseField>
+
+<ResponseField name="IsMipmappable" type="bool">
+  `true` if the texture was created with the `TextureUsage.GenerateMipmaps` flag.
+</ResponseField>
+
+<ResponseField name="Sampler" type="TextureSampler">
+  The sampler attached to this texture. Defaults to a linear sampler. Assign a new `TextureSampler` to change filter or wrap modes.
+</ResponseField>
+
+<ResponseField name="SampleCount" type="TextureSampleCount">
+  Multisampling count. Values above `Count1` require resolve via `CommandBuffer.ResolveMultisampledTexture`.
+</ResponseField>
+
+<ResponseField name="OwnsTexture" type="bool">
+  `true` if this object created the underlying Veldrid texture (and will dispose it). `false` if wrapping an externally owned texture.
+</ResponseField>
+
+### GenerateMipmaps
+
+```csharp
+public void GenerateMipmaps()
+```
+
+Generates a full mip chain on the GPU. Requires `IsMipmappable` to be `true` (i.e., the texture was created with `TextureUsage.GenerateMipmaps`). Throws `InvalidOperationException` otherwise.
+
+### GetMemoryUsage
+
+```csharp
+public uint GetMemoryUsage()
+```
+
+Returns an estimate of GPU memory usage in bytes: `width × height × depth × arrayLayers × bytesPerPixel`.
+
+---
+
+## Texture2D
+
+`Texture2D` is the most common texture type — 2D images with optional multisampling.
+
+```csharp
+public sealed class Texture2D : Texture
+```
+
+### Properties
+
+<ResponseField name="Width" type="uint">
+  Texture width in pixels.
+</ResponseField>
+
+<ResponseField name="Height" type="uint">
+  Texture height in pixels.
+</ResponseField>
+
+### Constructor
+
+```csharp
+public Texture2D(
+    uint width,
+    uint height,
+    uint mipLevels = 1,
+    PixelFormat format = PixelFormat.R8_G8_B8_A8_UNorm,
+    TextureUsage usage = TextureUsage.Sampled,
+    TextureSampleCount sampleCount = TextureSampleCount.Count1)
+```
+
+<ParamField path="width" type="uint">Width in pixels.</ParamField>
+<ParamField path="height" type="uint">Height in pixels.</ParamField>
+<ParamField path="mipLevels" type="uint" default="1">Number of mip levels. Pass `0` to let the driver choose the full chain.</ParamField>
+<ParamField path="format" type="PixelFormat" default="R8_G8_B8_A8_UNorm">Pixel format.</ParamField>
+<ParamField path="usage" type="TextureUsage" default="Sampled">Usage flags.</ParamField>
+<ParamField path="sampleCount" type="TextureSampleCount" default="Count1">MSAA sample count.</ParamField>
+
+### Built-in Defaults
+
+Several static `AssetRef<Texture2D>` properties provide built-in default textures:
+
+| Property | Description |
+|---|---|
+| `Texture2D.White` | 1×1 white texture |
+| `Texture2D.Black` | 1×1 black texture |
+| `Texture2D.Gray` | 1×1 50% grey texture |
+| `Texture2D.Normal` | 1×1 flat normal map (0.5, 0.5, 1.0) |
+| `Texture2D.Red` | 1×1 red texture |
+| `Texture2D.Grid` | Default grid texture |
+| `Texture2D.EmptyRW` | 1×1 black storage (read-write) texture |
+
+### Uploading Pixel Data
+
+#### SetData
+
+```csharp
+public void SetData<T>(Span<T> data, uint mipLevel = 0) where T : unmanaged
+public void SetData<T>(Span<T> data, uint rectX, uint rectY, uint rectWidth, uint rectHeight, uint mipLevel = 0) where T : unmanaged
+```
+
+Uploads pixel data from a CPU `Span<T>` to the full texture or a sub-rectangle.
+
+<ParamField path="data" type="Span&lt;T&gt;">Pixel data. `T` must match the texture's `PixelFormat` (e.g., use `Color32` for `R8_G8_B8_A8_UNorm`).</ParamField>
+<ParamField path="mipLevel" type="uint" default="0">Mip level to write to.</ParamField>
+
+#### SetDataPtr (unsafe)
+
+```csharp
+public unsafe void SetDataPtr(void* ptr, uint rectX, uint rectY, uint rectWidth, uint rectHeight, uint mipLevel = 0)
+```
+
+Low-level upload from a raw pointer. Useful when interoperating with native image libraries.
+
+### Reading Pixel Data
+
+#### CopyData
+
+```csharp
+public void CopyData<T>(Span<T> data, uint mipLevel = 0) where T : unmanaged
+```
+
+Copies the entire mip level into `data`. The span must be large enough to hold all pixels.
+
+#### GetPixel
+
+```csharp
+public T GetPixel<T>(uint x, uint y, uint mipLevel = 0) where T : unmanaged
+```
+
+Returns the value of a single pixel. Performs a GPU-to-CPU readback via a staging texture.
+
+### Resize
+
+```csharp
+public void RecreateTexture(uint width, uint height)
+```
+
+Destroys the current texture and recreates it at the new size, preserving format, usage, and mip level count. All previously uploaded pixel data is lost.
+
+---
+
+## RenderTexture
+
+`RenderTexture` is Prowl's off-screen render target. It combines one or more colour `Texture2D` buffers, an optional depth `Texture2D` buffer, and a Veldrid `Framebuffer` into a single object.
+
+```csharp
+public sealed class RenderTexture : EngineObject, ISerializable
+```
+
+### Properties
+
+<ResponseField name="Width" type="uint">Render target width in pixels.</ResponseField>
+<ResponseField name="Height" type="uint">Render target height in pixels.</ResponseField>
+<ResponseField name="ColorBuffers" type="Texture2D[]">Array of colour attachment textures. Index 0 is the primary colour buffer.</ResponseField>
+<ResponseField name="DepthBuffer" type="Texture2D">The depth/stencil attachment texture. May be `null` if no depth format was specified.</ResponseField>
+<ResponseField name="Framebuffer" type="Framebuffer">The underlying Veldrid `Framebuffer`. Pass this to `CommandBuffer.SetRenderTarget`.</ResponseField>
+<ResponseField name="Sampled" type="bool">`true` if colour buffers carry `TextureUsage.Sampled`, making them bindable as shader inputs.</ResponseField>
+<ResponseField name="RandomWriteEnabled" type="bool">`true` if colour buffers carry `TextureUsage.Storage` for compute shader read/write access.</ResponseField>
+<ResponseField name="SampleCount" type="TextureSampleCount">MSAA sample count of all colour buffers.</ResponseField>
+
+### Constructors
+
+<Tabs>
+<Tab title="Simple (RGBA + auto depth)">
+```csharp
+public RenderTexture(
+    uint width, uint height,
+    bool sampled = false,
+    bool enableRandomWrite = false,
+    TextureSampleCount sampleCount = TextureSampleCount.Count1)
+```
+Creates an RGBA8 colour buffer and the best-supported depth format.
+</Tab>
+<Tab title="Custom formats">
+```csharp
+public RenderTexture(
+    uint width, uint height,
+    PixelFormat[] colorFormats = null,
+    PixelFormat? depthFormat = null,
+    bool sampled = false,
+    bool enableRandomWrite = false,
+    TextureSampleCount sampleCount = TextureSampleCount.Count1)
+```
+Full control over per-attachment formats. Pass `null` for `colorFormats` to omit colour buffers; pass `null` for `depthFormat` to omit depth.
+</Tab>
+<Tab title="From description">
+```csharp
+public RenderTexture(RenderTextureDescription description)
+```
+Creates from a reusable `RenderTextureDescription` value type.
+</Tab>
+</Tabs>
+
+### Implicit Conversions
+
+```csharp
+// Cast to Framebuffer
+Framebuffer fb = myRenderTexture;
+
+// Cast to Texture2D (returns ColorBuffers[0])
+Texture2D col = myRenderTexture;
+```
+
+### Temporary RT Pool
+
+Prowl provides a pooling system for short-lived render textures. Pooled textures are automatically aged and destroyed if not re-requested within 10 frames.
+
+#### GetTemporaryRT
+
+```csharp
+public static RenderTexture GetTemporaryRT(
+    uint width, uint height,
+    bool sampled = true, bool randomWrite = false,
+    TextureSampleCount samples = TextureSampleCount.Count1)
+
+public static RenderTexture GetTemporaryRT(
+    uint width, uint height,
+    PixelFormat[] colorFormats,
+    bool sampled = true, bool randomWrite = false,
+    TextureSampleCount samples = TextureSampleCount.Count1)
+
+public static RenderTexture GetTemporaryRT(
+    uint width, uint height,
+    PixelFormat? depthFormat,
+    PixelFormat[] colorFormats,
+    bool sampled = true, bool randomWrite = false,
+    TextureSampleCount samples = TextureSampleCount.Count1)
+
+public static RenderTexture GetTemporaryRT(RenderTextureDescription description)
+```
+
+Returns a pooled `RenderTexture` matching the description, or creates a new one if none is available.
+
+#### ReleaseTemporaryRT
+
+```csharp
+public static void ReleaseTemporaryRT(RenderTexture renderTexture)
+```
+
+Returns a temporary render texture to the pool. Do not use the texture after calling this.
+
+```csharp
+// Acquire, use, and release a temporary render texture
+RenderTexture tmp = RenderTexture.GetTemporaryRT(1280, 720, sampled: true);
+
+CommandBuffer cmd = CommandBufferPool.Get();
+cmd.SetRenderTarget(tmp);
+cmd.ClearRenderTarget(true, true, Color.clear);
+// ... render into tmp ...
+Graphics.SubmitCommandBuffer(cmd);
+CommandBufferPool.Release(cmd);
+
+// Use tmp.ColorBuffers[0] as a shader input here
+
+RenderTexture.ReleaseTemporaryRT(tmp);
+```
+
+---
+
+## TextureSampler
+
+Every `Texture` carries a `TextureSampler` that wraps a Veldrid `SamplerDescription`. The default sampler is linear filtering with clamped addresses.
+
+```csharp
+// Point (nearest-neighbour) filtering
+myTexture.Sampler.SetFilter(FilterType.Point, FilterType.Point, FilterType.Point);
+
+// Repeat address mode
+myTexture.Sampler = TextureSampler.CreateLinear();
+```
+
+Common sampler factories provided by the engine:
+- `TextureSampler.CreateLinear()` — `MinLinear_MagLinear_MipLinear`, clamped
+- `TextureSampler.CreatePoint()` — `MinPoint_MagPoint_MipPoint`, clamped
+
+---
+
+## Using Textures in Materials
+
+Asset textures are referenced as `AssetRef<Texture2D>` and assigned to material shader properties by name:
+
+```csharp
+AssetRef<Texture2D> albedoRef = Application.AssetProvider.LoadAsset<Texture2D>("Textures/wall_albedo.png");
+myMaterial.SetTexture("_AlbedoMap", albedoRef.Res);
+```
+
+<Tip>
+When a texture is needed only for a single frame or a short effect, use `RenderTexture.GetTemporaryRT` and `ReleaseTemporaryRT` to avoid manual allocation and disposal.
+</Tip>
+
+<Warning>
+Textures created with `TextureSampleCount` values above `Count1` (MSAA) cannot be sampled directly in shaders. You must resolve them to a `Count1` texture using `CommandBuffer.ResolveMultisampledTexture` before sampling.
+</Warning>

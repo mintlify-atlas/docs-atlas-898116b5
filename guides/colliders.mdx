@@ -1,0 +1,247 @@
+---
+title: 'Colliders: Shapes and Triggers in Prowl'
+sidebarTitle: 'Colliders'
+description: 'Add physics colliders to GameObjects in Prowl: box, sphere, capsule, cylinder, cone, convex hull, mesh, and wheel collider components.'
+---
+
+Colliders are the physical shapes that the Jitter2 simulation uses to detect contact between objects. Every `Rigidbody3D` gathers all `Collider` components on itself and its children to build a composite body — you never need to call shape-creation APIs manually. Prowl ships eight collider types covering everything from simple primitives to arbitrary triangle-mesh geometry, plus an experimental `WheelCollider` for vehicle simulations. Choosing the right collider type for each object keeps your physics simulation fast and predictable.
+
+## How Colliders Work with Rigidbody3D
+
+A `Collider` on its own has no effect. It must live on the same `GameObject` as a `Rigidbody3D`, or anywhere in the `GameObject`'s child hierarchy. When the `Rigidbody3D` is enabled — or when any collider is added, removed, or changed at runtime — `Rigidbody3D.UpdateShapes()` regenerates the entire body shape automatically.
+
+<Note>
+Multiple colliders on a single `Rigidbody3D` are composed into a **compound body**. Each collider's `center` and `rotation` offsets are applied in the rigid body's local space, making compound shapes easy to build without additional code.
+</Note>
+
+The base `Collider` class exposes two shared offset properties:
+
+| Property | Type | Description |
+|---|---|---|
+| `center` | `Vector3` | Local-space positional offset of the shape relative to the parent rigid body. |
+| `rotation` | `Vector3` | Euler-angle rotation offset applied to the shape in local space. |
+
+Any change to `center` or `rotation` triggers `OnValidate` → `Rigidbody3D.OnValidate()`, instantly refreshing the physics body in the editor and at runtime.
+
+## Primitive Colliders
+
+Primitive colliders map directly to Jitter2's analytic shapes and are the cheapest option for collision detection. Always prefer a primitive over a mesh collider when your geometry is close enough to one of these forms.
+
+<CardGroup cols={2}>
+  <Card title="BoxCollider" icon="cube">
+    A solid axis-aligned box. Set the `Size` vector to match the dimensions of your mesh in metres.
+  </Card>
+  <Card title="SphereCollider" icon="circle">
+    A perfect sphere. Ideal for balls, grenades, and rounded objects. Set `Radius` in metres.
+  </Card>
+  <Card title="CapsuleCollider" icon="capsules">
+    A cylinder with hemispherical end-caps. The standard shape for humanoid characters. Controlled by `Radius` and `Height`.
+  </Card>
+  <Card title="CylinderCollider" icon="cylinder">
+    A flat-capped cylinder. Useful for wheels, columns, and cans. Controlled by `Radius` and `Height`.
+  </Card>
+  <Card title="ConeCollider" icon="triangle">
+    A cone shape with a single apex. Controlled by `Radius` and `Height`.
+  </Card>
+</CardGroup>
+
+### BoxCollider
+
+```csharp
+BoxCollider box = gameObject.AddComponent<BoxCollider>();
+box.Size   = new Vector3(2.0f, 1.0f, 0.5f); // width × height × depth (metres)
+box.center = new Vector3(0, 0.5f, 0);        // lift the box half a metre
+```
+
+### SphereCollider
+
+```csharp
+SphereCollider sphere = gameObject.AddComponent<SphereCollider>();
+sphere.Radius = 0.5f; // half-metre radius
+```
+
+### CapsuleCollider
+
+```csharp
+CapsuleCollider capsule = gameObject.AddComponent<CapsuleCollider>();
+capsule.Radius = 0.4f; // body radius
+capsule.Height = 1.8f; // total height including end-caps
+```
+
+### CylinderCollider
+
+```csharp
+CylinderCollider cylinder = gameObject.AddComponent<CylinderCollider>();
+cylinder.Radius = 0.3f;
+cylinder.Height = 1.2f;
+```
+
+### ConeCollider
+
+```csharp
+ConeCollider cone = gameObject.AddComponent<ConeCollider>();
+cone.Radius = 0.5f;
+cone.Height = 1.5f;
+```
+
+## Mesh-Based Colliders
+
+Use mesh colliders when your geometry cannot be approximated by a primitive. There are two variants with different performance and accuracy trade-offs.
+
+<Tabs>
+  <Tab title="ConvexHullCollider">
+    Builds a convex hull from all vertices in the referenced `Mesh` using Jitter2's `ConvexHullShape`. This is a **single shape**, so it is fast and can be used on dynamic (non-static) bodies. It cannot represent concave geometry.
+
+    ```csharp
+    ConvexHullCollider hull = gameObject.AddComponent<ConvexHullCollider>();
+
+    // Assign a mesh reference — the collider auto-fetches from MeshRenderer if left null
+    hull.Mesh = myMeshAsset;
+    ```
+
+    If `Mesh` is not assigned the component will fall back to reading the `Mesh` from a sibling `MeshRenderer` component on `Awake`.
+  </Tab>
+  <Tab title="MeshCollider">
+    Creates a `TriangleMesh` from every triangle in the referenced `Mesh`, generating one `TriangleShape` per triangle. This accurately represents any arbitrary shape — including concave geometry — but is expensive and **should only be used on static bodies**.
+
+    ```csharp
+    MeshCollider meshCol = gameObject.AddComponent<MeshCollider>();
+    meshCol.Mesh = terrainMeshAsset;
+
+    // Mark the rigidbody as static so Jitter2 can optimise it
+    GetComponent<Rigidbody3D>().IsStatic = true;
+    ```
+
+    Like `ConvexHullCollider`, it will attempt to source the mesh from a sibling `MeshRenderer` if `Mesh` is unset.
+  </Tab>
+</Tabs>
+
+<Warning>
+Do not use `MeshCollider` on dynamic rigid bodies. The triangle-mesh shape does not support mass-inertia calculations correctly and will produce unpredictable simulation results. Use `ConvexHullCollider` for dynamic mesh-shaped objects instead.
+</Warning>
+
+## WheelCollider (Experimental)
+
+`WheelCollider` is a specialised component that simulates a raycast-based vehicle wheel with suspension, side-slip friction, and drive torque. It does not extend `Collider` — it is a standalone `MonoBehaviour` that must be placed on a child `GameObject` of the vehicle's `Rigidbody3D`.
+
+<Note>
+`WheelCollider` is marked experimental. The forward-friction and torque feedback code paths are partially commented out in the source while the model is being refined.
+</Note>
+
+```csharp
+// Retrieve wheels and auto-tune suspension for a 4-wheel vehicle
+WheelCollider[] wheels = GetComponentsInChildren<WheelCollider>();
+foreach (var w in wheels)
+    w.AdjustWheelValues(); // calculates Spring, Damping, Inertia from body mass
+
+// Drive the front wheels each FixedUpdate
+public override void FixedUpdate()
+{
+    float throttle = Input.GetAxis("Vertical");
+    wheels[0].AddTorque(throttle * engineTorque);
+    wheels[1].AddTorque(throttle * engineTorque);
+
+    // Steer the front wheels
+    float steer = Input.GetAxis("Horizontal") * maxSteerAngle;
+    wheels[0].SteerAngle = steer;
+    wheels[1].SteerAngle = steer;
+}
+```
+
+Key `WheelCollider` properties:
+
+| Property | Default | Description |
+|---|---|---|
+| `Radius` | `0.5` | Wheel radius in metres. |
+| `SuspensionTravel` | `0.2` | Maximum vertical suspension travel (metres). |
+| `Spring` | `35000` | Suspension spring stiffness (N/m). |
+| `Damping` | `1500` | Suspension damping coefficient (N·s/m). |
+| `Inertia` | `5` | Rotational inertia of the wheel (kg·m²). |
+| `SideFriction` | `3.2` | Lateral friction multiplier. |
+| `SteerAngle` | `0` | Yaw offset applied when casting contact rays (degrees). |
+| `IsLocked` | `false` | When `true`, the wheel is braked — angular velocity is zeroed. |
+| `IsGrounded` | _(read-only)_ | `true` when at least one ray hit the ground last step. |
+
+## Compound Colliders
+
+Attach multiple collider components to a single `Rigidbody3D` (on the same or child `GameObjects`) to model complex shapes. The rigid body iterates all `Collider` components via `GetComponents<Collider>()` and composites their shapes using `TransformedShape` to preserve each collider's offset and rotation.
+
+```csharp
+// A capsule body with a small box for a backpack
+var rb = gameObject.AddComponent<Rigidbody3D>();
+rb.Mass = 80.0;
+
+// Main body
+var body = gameObject.AddComponent<CapsuleCollider>();
+body.Radius = 0.35f;
+body.Height = 1.75f;
+
+// Backpack offset backward and up
+var pack = gameObject.AddComponent<BoxCollider>();
+pack.Size   = new Vector3(0.4f, 0.5f, 0.2f);
+pack.center = new Vector3(0f, 0.6f, -0.25f);
+```
+
+<Tip>
+You can enable and disable individual `Collider` components at runtime. Each toggle calls `rb.OnValidate()` internally, which rebuilds the compound shape on the fly — no manual bookkeeping required.
+</Tip>
+
+## Setting Up a Character
+
+<Steps>
+  <Step title="Create the GameObject">
+    Add an empty `GameObject` to your scene and name it **Player**.
+  </Step>
+  <Step title="Add Rigidbody3D">
+    Add **Component → Physics → Rigidbody3D**. Set `Mass` to `80` and leave `AffectedByGravity` enabled.
+  </Step>
+  <Step title="Add CapsuleCollider">
+    Add **Component → Physics → Capsule Collider**. Set `Radius` to `0.35` and `Height` to `1.75`. Offset `center` to `(0, 0.875, 0)` so the bottom of the capsule sits at the object's origin.
+  </Step>
+  <Step title="Tune material">
+    Set `Friction` to `0.4` and `Restitution` to `0` on the `Rigidbody3D` so the character slides smoothly without bouncing.
+  </Step>
+  <Step title="Script movement">
+    Use `rb.Velocity` or `rb.AddForce` in your movement component, and a downward `Physics.Raycast` for ground detection.
+
+    ```csharp
+    using Prowl.Runtime;
+
+    public class CharacterController : MonoBehaviour
+    {
+        public double moveSpeed = 5.0;
+        public double jumpForce = 8.0;
+        private Rigidbody3D _rb;
+        private bool _isGrounded;
+
+        public override void Awake()
+        {
+            _rb = GetComponent<Rigidbody3D>();
+        }
+
+        public override void FixedUpdate()
+        {
+            // Ground check
+            _isGrounded = Physics.Raycast(
+                Transform.position,
+                Vector3.down,
+                out _,
+                0.95f);
+
+            // Horizontal movement
+            double h = Input.GetAxis("Horizontal");
+            double v = Input.GetAxis("Vertical");
+            Vector3 move = new Vector3(h, 0, v) * moveSpeed;
+            _rb.Velocity = new Vector3(move.x, _rb.Velocity.y, move.z);
+
+            // Jump
+            if (_isGrounded && Input.GetKeyDown(KeyCode.Space))
+            {
+                Vector3 vel = _rb.Velocity;
+                _rb.Velocity = new Vector3(vel.x, jumpForce, vel.z);
+            }
+        }
+    }
+    ```
+  </Step>
+</Steps>

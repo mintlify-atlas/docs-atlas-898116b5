@@ -1,0 +1,282 @@
+---
+title: 'Asset System: Import, Reference, and Load Assets'
+sidebarTitle: 'Assets'
+description: 'Prowl uses meta files, GUID references, and a scriptable importer pipeline to track, import, and load assets like meshes, textures, audio, and scripts.'
+---
+
+Assets in Prowl are any importable file — meshes, textures, audio clips, materials, shaders, prefabs, scenes, fonts, scripts, and more. Each asset is assigned a stable **GUID** the moment it is first seen. All in-code references use that GUID, so files can be moved or renamed without breaking anything. Importing, caching, and loading is handled by `AssetDatabase` in the editor and by a pluggable `IAssetProvider` at runtime.
+
+## Asset types
+
+Prowl ships with first-party runtime resource types that all extend `EngineObject`:
+
+<CardGroup cols={3}>
+  <Card title="Mesh" icon="cube">Built-in or imported 3-D geometry with vertex/index buffers.</Card>
+  <Card title="Material" icon="palette">References a `Shader` plus per-material property overrides.</Card>
+  <Card title="Shader" icon="code">HLSL/GLSL source compiled to a GPU program.</Card>
+  <Card title="Texture2D" icon="image">2-D image loaded from PNG, JPG, TGA, DDS, and more.</Card>
+  <Card title="AudioClip" icon="volume-high">WAV or OGG audio data.</Card>
+  <Card title="Prefab" icon="object-group">Reusable `GameObject` hierarchy template.</Card>
+  <Card title="Scene" icon="map">A full scene file serialised in Echo format.</Card>
+  <Card title="AnimationClip" icon="film">Keyframe animation data.</Card>
+  <Card title="Font" icon="font">TrueType/OpenType font for UI rendering.</Card>
+  <Card title="TextAsset" icon="file-lines">Raw text file loaded as a string.</Card>
+  <Card title="ScriptableObject" icon="database">Data-only asset defined in C#.</Card>
+  <Card title="MonoScript" icon="scroll">Reference to a compiled C# script type.</Card>
+</CardGroup>
+
+---
+
+## AssetRef&lt;T&gt; — typed asset handles
+
+`AssetRef<T>` is a lightweight value-type wrapper (a `struct`) that represents a reference to any `EngineObject`-based asset. It stores the GUID and an optional `FileID` (for sub-assets), plus a cached instance pointer.
+
+```csharp
+// Declare a serialisable asset field on a MonoBehaviour
+public AssetRef<Texture2D> albedoMap;
+public AssetRef<AudioClip> jumpSound;
+
+// Accessing .Res triggers a load if not already in memory
+Texture2D tex = albedoMap.Res;
+
+// Check availability before using
+if (jumpSound.IsAvailable)
+    jumpSound.Res.Play();
+
+// Implicit conversion from a live instance
+Texture2D myTex = /* ... */;
+AssetRef<Texture2D> myRef = myTex;     // implicit
+```
+
+### Key AssetRef&lt;T&gt; members
+
+| Member | Description |
+|---|---|
+| `Res` | Loads and returns the instance; `null` only if the asset is missing |
+| `ResWeak` | Returns the cached instance without triggering a load |
+| `IsAvailable` | Triggers a load attempt; returns `false` if still missing |
+| `IsLoaded` | `true` if the instance is already in memory |
+| `IsExplicitNull` | `true` if both instance and GUID are empty (intentional null) |
+| `IsRuntimeResource` | `true` for objects created at runtime with no GUID |
+| `AssetID` | The GUID of the referenced asset |
+| `FileID` | Sub-asset index (0 = main asset) |
+| `EnsureLoaded()` | Preloads the asset without returning it |
+| `Detach()` | Clears the cached pointer to allow GC without losing the GUID |
+
+---
+
+## IAssetProvider — runtime loading interface
+
+`IAssetProvider` abstracts the underlying storage so the same game code works in the editor and in a built game:
+
+```csharp
+public interface IAssetProvider
+{
+    bool HasAsset(Guid assetID);
+    AssetRef<T> LoadAsset<T>(string relativeAssetPath, ushort fileID = 0) where T : EngineObject;
+    AssetRef<T> LoadAsset<T>(Guid guid, ushort fileID = 0)              where T : EngineObject;
+    AssetRef<T> LoadAsset<T>(IAssetRef assetID)                         where T : EngineObject;
+    SerializedAsset? LoadAssetRaw(string relativeAssetPath);
+    SerializedAsset? LoadAssetRaw(Guid guid);
+}
+```
+
+The active provider is exposed via `Application.AssetProvider`. In the editor this is backed by `AssetDatabase`; in a shipped build it uses a standalone bundle reader. `AssetRef<T>.Res` calls `Application.AssetProvider.LoadAsset<T>()` automatically — you rarely need to call the provider directly.
+
+```csharp
+// Manual load by GUID (useful in editor tooling)
+AssetRef<Material> mat = Application.AssetProvider.LoadAsset<Material>(knownGuid);
+```
+
+---
+
+## Meta files and GUID tracking
+
+Every asset file on disk has a sidecar `.meta` file with the same base name. The meta file is managed by the `MetaFile` class:
+
+```csharp
+public class MetaFile
+{
+    public Guid guid;              // stable GUID, assigned once and never changes
+    public int version;            // MetaFile format version
+    public DateTime lastModified;  // used to detect when reimport is needed
+    public ScriptedImporter importer; // which importer handles this file type
+    public string[] assetNames;    // name of main + sub assets after import
+    public string[] assetTypes;    // fully-qualified type names of main + sub assets
+    public List<Guid> dependencies; // GUIDs this asset depends on
+}
+```
+
+If you delete or rename an asset file through the editor's asset browser, Prowl moves or deletes the `.meta` file alongside it, preserving all GUID-based references throughout your project.
+
+<Note>
+Never edit `.meta` files by hand and never commit asset files without their corresponding `.meta` files into source control — the GUID in the meta file is what ties all script references together.
+</Note>
+
+---
+
+## AssetDatabase (editor-only)
+
+`AssetDatabase` is a static, partial class in `Prowl.Editor.Assets` that manages the import cache, file watching, and in-memory asset data.
+
+### Refresh / update cycle
+
+```csharp
+// Force a full refresh (scans root folders for new/changed/deleted files)
+AssetDatabase.Update();
+
+// Reimport a specific file
+AssetDatabase.Reimport(new FileInfo("Assets/Textures/hero.png"));
+
+// Reimport everything in a folder
+AssetDatabase.ReimportFolder(new DirectoryInfo("Assets/Textures"));
+
+// Reimport every asset in all root folders
+AssetDatabase.ReimportAll();
+```
+
+`Update()` is called automatically every 5 seconds while the editor window is focused. Use `LockUpdate()` / `UnlockUpdate()` to batch changes without spurious reimports:
+
+```csharp
+AssetDatabase.LockUpdate();
+try
+{
+    File.WriteAllText("Assets/Data/config.json", jsonText);
+    // ... other file writes ...
+}
+finally
+{
+    AssetDatabase.UnlockUpdate(); // triggers one Update() after the lock is released
+}
+```
+
+### Loading assets (editor)
+
+```csharp
+// By file path
+Texture2D tex = AssetDatabase.LoadAsset<Texture2D>(
+    new FileInfo("Assets/Textures/hero.png"), fileID: 0);
+
+// By GUID
+Mesh mesh = AssetDatabase.LoadAsset<Mesh>(knownGuid, fileID: 0);
+```
+
+### GUID ↔ path utilities
+
+```csharp
+if (AssetDatabase.TryGetGuid(new FileInfo("Assets/hero.png"), out Guid guid))
+    Debug.Log("GUID: " + guid);
+
+if (AssetDatabase.TryGetFile(guid, out FileInfo? file))
+    Debug.Log("Path: " + file.FullName);
+```
+
+### File operations
+
+```csharp
+// Move an asset (also moves the .meta file)
+AssetDatabase.Move(
+    new FileInfo("Assets/Old/hero.png"),
+    "Assets/Characters/hero.png");
+
+// Rename
+AssetDatabase.Rename(new FileInfo("Assets/hero.png"), "Hero_Diffuse");
+
+// Delete (also deletes the .meta file)
+AssetDatabase.Delete(new FileInfo("Assets/hero.png"));
+```
+
+### Saving a modified asset
+
+```csharp
+// Serialises the in-memory object back to its source file on disk.
+// Only safe for Echo-serialisable assets (Material, Scene, Prefab, ScriptableObject).
+AssetDatabase.SaveAsset(myMaterial);
+```
+
+---
+
+## ScriptedImporter — custom importers
+
+A `ScriptedImporter` is a class that converts a raw source file into one or more `EngineObject`s. You declare which file extensions it handles via the `[Importer]` attribute, and implement `Import()` to populate a `SerializedAsset` context:
+
+```csharp
+using Prowl.Editor.Assets;
+using Prowl.Runtime;
+using Prowl.Runtime.Utils;
+
+[Importer("FileIcon.png", typeof(MyDataAsset), ".mydata")]
+public class MyDataImporter : ScriptedImporter
+{
+    // Public fields are exposed as importer settings in the Inspector
+    public bool normalise = true;
+
+    public override void Import(SerializedAsset ctx, FileInfo assetPath)
+    {
+        string raw = File.ReadAllText(assetPath.FullName);
+
+        MyDataAsset asset = new MyDataAsset();
+        asset.Name = Path.GetFileNameWithoutExtension(assetPath.Name);
+        asset.RawText = raw;
+
+        // The main asset must always be set
+        ctx.SetMainObject(asset);
+
+        // Optional: add sub-assets (fileID 1, 2, ...)
+        // ctx.AddSubObject(subAsset);
+    }
+}
+```
+
+<Steps>
+  <Step title="Create the importer class">
+    Extend `ScriptedImporter` and apply `[Importer]` with an icon path, the primary output type, and one or more file extensions.
+  </Step>
+  <Step title="Implement Import()">
+    Read the source file, construct one or more `EngineObject` instances, and call `ctx.SetMainObject()`. Optionally add sub-assets with `ctx.AddSubObject()`.
+  </Step>
+  <Step title="Drop a file into your Assets folder">
+    `AssetDatabase.Update()` detects the new file, creates a `.meta` file pointing to your importer, and calls `Import()`. The output is cached in `Library/AssetDatabase/`.
+  </Step>
+  <Step title="Optional: add an Inspector UI">
+    Decorate a `ScriptedEditor` class with `[CustomEditor(typeof(MyDataImporter))]` to expose importer settings in the asset inspector panel.
+  </Step>
+</Steps>
+
+The built-in importers follow this same pattern:
+
+| Importer | Extensions |
+|---|---|
+| `TextureImporter` | `.png`, `.jpg`, `.tga`, `.dds`, `.webp`, … |
+| `AudioClipImporter` | `.wav`, `.wave`, `.ogg` |
+| `MeshImporter` | `.mesh` |
+| `ModelImporter` | `.fbx`, `.obj`, `.gltf`, `.glb`, … |
+| `FontImporter` | `.ttf`, `.otf` |
+| `ShaderImporter` | `.shader` |
+| `MaterialImporter` | `.mat` |
+| `SceneImporter` | `.prowl` |
+| `PrefabImporter` | `.prefab` |
+| `TextAssetImporter` | `.txt`, `.json`, `.xml`, `.csv`, … |
+
+---
+
+## Sub-assets
+
+A single source file can produce multiple `EngineObject`s. For example, a model file may import as one main `Mesh` with several embedded `Material` sub-assets. Sub-assets are identified by a `FileID` starting at 1:
+
+```csharp
+// Load the main mesh (fileID 0)
+Mesh mainMesh = AssetDatabase.LoadAsset<Mesh>(guid, fileID: 0);
+
+// Load the second sub-asset (fileID 1)
+Material embeddedMat = AssetDatabase.LoadAsset<Material>(guid, fileID: 1);
+
+// AssetRef pointing to a specific sub-asset
+var subRef = new AssetRef<Material>(guid, fileID: 1);
+```
+
+<Accordion title="Asset caching details">
+  After a successful import, the serialised asset data is written to `Library/AssetDatabase/<guid>.prowl_asset`. On the next load request, `AssetDatabase` reads from this cached file rather than re-running the importer. The cache is invalidated when the source file's `LastWriteTime` changes or when the meta file's `version` is outdated.
+
+  Cached objects are kept in memory in `guidToAssetData`. If the main or any sub-asset is found to be destroyed, the whole entry is evicted and reloaded from disk on the next access.
+</Accordion>
