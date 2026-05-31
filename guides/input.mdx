@@ -61,7 +61,7 @@ The `Key` enum mirrors the Veldrid physical key set. Here are the most commonly 
 
 **Letters** — `Key.A` through `Key.Z`
 
-**Top-row numbers** — `Key.Num0` through `Key.Num9`
+**Top-row numbers** — `Key.Num1` through `Key.Num9`, `Key.Num0`
 
 **Modifier keys** — `Key.LeftShift`, `Key.RightShift`, `Key.LeftControl`, `Key.RightControl`, `Key.LeftAlt`, `Key.RightAlt`
 
@@ -107,6 +107,7 @@ public class Weapon : MonoBehaviour
 | `MouseButton.Right` | Secondary button |
 | `MouseButton.Middle` | Scroll-wheel click |
 | `MouseButton.Button1` – `MouseButton.Button9` | Extra side buttons |
+| `MouseButton.Unknown` | Unrecognised button (`-1`) |
 
 ### Position and Delta
 
@@ -324,12 +325,10 @@ public class FPSController : MonoBehaviour
     public float lookSensitivity = 0.15f;
     public float jumpForce   = 6f;
 
-    private Rigidbody _rb;
     private float _pitch;
 
     public override void Awake()
     {
-        _rb = GetComponent<Rigidbody>();
         Input.CursorLocked  = true;
         Input.CursorVisible = false;
     }
@@ -342,10 +341,6 @@ public class FPSController : MonoBehaviour
         _pitch = Math.Clamp(_pitch - look.y, -80f, 80f);
         GetComponentInChildren<Camera>().Transform.localEulerAngles =
             new Vector3(_pitch, 0, 0);
-
-        // --- Jump ---
-        if (Input.GetKeyDown(Key.Space))
-            _rb.AddForce(Vector3.Up * jumpForce, ForceMode.Impulse);
 
         // --- Cursor release ---
         if (Input.GetKeyDown(Key.Escape))
@@ -364,7 +359,7 @@ public class FPSController : MonoBehaviour
         float speed = moveSpeed * (Input.GetKey(Key.LeftShift) ? sprintMult : 1f);
         Vector3 move = (Transform.Right * x + Transform.Forward * z).Normalized * speed;
 
-        _rb.velocity = new Vector3(move.x, _rb.velocity.y, move.z);
+        Transform.position += new Vector3(move.x, 0, move.z) * (float)Time.fixedDeltaTime;
     }
 }
 ```

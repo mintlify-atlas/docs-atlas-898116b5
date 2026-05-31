@@ -1,7 +1,7 @@
 ---
-title: 'Prowl Editor Layout and Navigation Guide'
+title: 'Prowl Editor Layout, Windows, and Navigation Guide'
 sidebarTitle: 'Editor Overview'
-description: 'Learn the Prowl editor layout: scene view, hierarchy, inspector, assets browser, console, game window, and docking system.'
+description: 'Master the Prowl editor: every panel including scene view, hierarchy, inspector, asset browser, console, game window, docking system, and play controls.'
 ---
 
 The Prowl editor is a fully integrated development environment built on the engine's own immediate-mode UI library — the same library used for in-game UI. Every panel you see is a live `EditorWindow` instance rendered each frame, which means the editor itself serves as a practical showcase of what the UI system can do. This guide walks through every major window, explains how the docking system works, and covers the play controls, undo/redo system, and drag-and-drop workflows you will use every day.
@@ -104,11 +104,12 @@ Left-clicking in the Scene View raycasts against the scene's gBuffer to determin
 
 ### Drag & Drop into the Scene View
 
-You can drag assets from the **Assets Browser** directly onto the scene:
+You can drag assets from the **Asset Browser** directly onto the scene:
 
 | Asset Type | Result |
 |-----------|--------|
-| `GameObject` / Prefab | Instantiates at the surface hit point under the cursor, or 10 units in front of the camera if no surface is hit |
+| `GameObject` (prefab asset) | Clones the asset and places it at the surface hit point under the cursor, or 10 units in front of the camera if no surface is hit |
+| `Prefab` | Instantiates the prefab at the surface hit point under the cursor, or 10 units in front of the camera if no surface is hit |
 | `Scene` | Loads the dropped scene |
 | `Material` | Assigns the material to the `MeshRenderer` of the object under the cursor |
 
@@ -158,15 +159,15 @@ Use the search bar at the top of the Hierarchy to filter the visible entries by 
 
 The Inspector shows the properties of the currently selected object. When a `GameObject` is selected it lists all attached components; each component is rendered by its registered **property drawer**. Built-in drawers handle all primitive types, vectors, quaternions, colors, asset references, enums, and arrays. Custom drawers can be registered for any type by creating a class in an Editor script.
 
-Asset files selected in the Assets Browser are also shown in the Inspector, where you can view and edit their importer settings (e.g., texture compression, normal-map flag).
+Asset files selected in the Asset Browser are also shown in the Inspector, where you can view and edit their importer settings (e.g., texture compression, normal-map flag).
 
-## Assets Browser (`AssetsBrowserWindow`)
+## Asset Browser (`AssetsBrowserWindow`)
 
-The Assets Browser shows the contents of the currently selected folder inside your `Assets/` directory and lets you navigate the project's asset tree.
+The Asset Browser shows the contents of the currently selected folder inside your `Assets/` directory and lets you navigate the project's asset tree.
 
 ### Navigation
 
-The Assets Tree (a companion panel called `AssetsTreeWindow`) on the left shows the folder hierarchy. Clicking a folder in the tree updates the Assets Browser to show that folder's contents. You can also use the search bar inside the Browser to find files by name across the entire current folder (including sub-folders).
+The Asset Tree (a companion panel called `AssetsTreeWindow`) on the left shows the folder hierarchy. Clicking a folder in the tree updates the Asset Browser to show that folder's contents. You can also use the search bar inside the Browser to find files by name across the entire current folder (including sub-folders).
 
 ### Creating Assets
 
@@ -233,8 +234,12 @@ Any window can be reopened from **Windows** in the menu bar. The available windo
   <Card title="Game View" icon="gamepad">Windows → Game View</Card>
   <Card title="Hierarchy" icon="folder-tree">Windows → Hierarchy</Card>
   <Card title="Inspector" icon="circle-info">Windows → Inspector</Card>
-  <Card title="Assets Browser" icon="images">Windows → Assets Browser</Card>
+  <Card title="Asset Browser" icon="images">Windows → Assets Browser</Card>
+  <Card title="Asset Tree" icon="folder-tree">Windows → Assets Tree</Card>
   <Card title="Console" icon="terminal">Windows → Console</Card>
+  <Card title="Project Settings" icon="sliders">Windows → Project Settings</Card>
+  <Card title="Editor Preferences" icon="gear">Windows → Editor Preferences</Card>
+  <Card title="Scene Settings" icon="film">Windows → Scene Settings</Card>
 </CardGroup>
 
 ## Undo & Redo

@@ -1,5 +1,5 @@
 ---
-title: 'Immediate-Mode GUI System in Prowl Engine'
+title: 'Building a Runtime Immediate-Mode GUI in Prowl Engine'
 sidebarTitle: 'GUI System'
 description: 'Build runtime HUDs and editor tools using Prowl's custom immediate-mode GUI system: layout nodes, widgets, input, 2D/3D drawing, and animation.'
 ---
@@ -23,7 +23,7 @@ The currently active `Gui` for the current scope is always available as `Gui.Act
 
 ### GuiLayer Component *(Runtime)*
 
-Attach a `GuiLayer` component to a Camera GameObject to render a runtime GUI on top of that camera's output. The engine calls your `OnGUI` override each frame and passes the active `Gui` instance.
+Add a `GuiLayer` component to a Camera `GameObject` to render a runtime GUI on top of that camera's output. Each frame the engine calls `OnGUI(gui)` on every enabled `MonoBehaviour` in the scene, passing the active `Gui` instance. Override `OnGUI` in any of your components to draw UI.
 
 ```csharp
 public class PlayerHUD : MonoBehaviour
@@ -34,6 +34,8 @@ public class PlayerHUD : MonoBehaviour
     }
 }
 ```
+
+`GuiLayer` requires a `Camera` component on the same `GameObject`. The `PlayerHUD` (or any other component with `OnGUI`) can live on any `GameObject` in the scene.
 
 ### Editor Tools
 
@@ -58,7 +60,7 @@ Every GUI element lives inside a `LayoutNode`. Nodes form a tree; each node can 
 ```csharp
 public override void OnGUI(Gui gui)
 {
-    // A column panel 200 px wide, 100 % of screen height
+    // A column panel 200 px wide, 100% of screen height
     using (gui.Node("Panel")
         .Left(10).Top(10)
         .Width(200).Height(Size.Percentage(1f))
@@ -77,7 +79,7 @@ public override void OnGUI(Gui gui)
 | Method | Purpose |
 |---|---|
 | `.Width(Size)` / `.Height(Size)` | Fixed pixel size |
-| `.ExpandWidth()` / `.ExpandHeight()` | 100 % of parent |
+| `.ExpandWidth()` / `.ExpandHeight()` | 100% of parent |
 | `.Left(Offset)` / `.Top(Offset)` | Absolute or relative position |
 | `.Layout(LayoutType)` | `Row`, `Column`, or `None` |
 | `.Spacing(Size)` | Gap between children |
@@ -90,8 +92,8 @@ public override void OnGUI(Gui gui)
 `Size` and `Offset` accept plain pixel values or percentage helpers:
 
 ```csharp
-Size.Percentage(0.5f)          // 50 % of parent
-Size.Percentage(1f, -20)       // 100 % minus 20 px
+Size.Percentage(0.5f)          // 50% of parent
+Size.Percentage(1f, -20)       // 100% minus 20 px
 ```
 
 ## Basic Widgets
@@ -127,12 +129,12 @@ using (gui.Node("StartBtn")
 string playerName = "";
 
 gui.InputField(
-    ID:       "NameField",
-    value:    ref playerName,
+    ID:        "NameField",
+    value:     ref playerName,
     maxLength: 32,
-    flags:    InputFieldFlags.None,
-    x:        0, y: 0,
-    width:    Size.Percentage(1f)
+    flags:     InputFieldFlags.None,
+    x:         0, y: 0,
+    width:     Size.Percentage(1f)
 );
 ```
 
@@ -141,12 +143,16 @@ gui.InputField(
 ```csharp
 public enum InputFieldFlags : uint
 {
-    None           = 0,
-    NumbersOnly    = 1 << 0,
-    Multiline      = 1 << 1,
-    AllowTab       = 1 << 2,
+    None             = 0,
+    NumbersOnly      = 1 << 0,
+    Multiline        = 1 << 1,
+    AllowTab         = 1 << 2,
+    NoSelection      = 1 << 3,
+    DontAutoSelectAll = 1 << 4,
     EnterReturnsTrue = 1 << 5,
-    Readonly       = 1 << 7,
+    OnlyDisplay      = 1 << 6,
+    Readonly         = 1 << 7,
+    NoHorizontalScroll = 1 << 8,
 }
 ```
 
@@ -173,7 +179,7 @@ gui.Combo(
 Access via `gui.Draw2D`. All coordinates are in the GUI's local pixel space (top-left origin).
 
 ```csharp
-Rect nodeRect = gui.CurrentNode.LayoutData.Rect;
+Rect nodeRect  = gui.CurrentNode.LayoutData.Rect;
 Rect innerRect = gui.CurrentNode.LayoutData.InnerRect;
 
 // Filled rectangle
@@ -201,7 +207,7 @@ gui.Draw3D.DrawLine(Vector3.zero, Vector3.up * 5f, Color.green);
 
 ### UIDrawList
 
-`GuiDraw2D` routes all calls through a per-Z-index `UIDrawList`, which batches vertices just like Dear ImGui's `ImDrawList`. You can access it directly for custom low-level rendering:
+`GuiDraw2D` routes all calls through a per-Z-index `UIDrawList`, which batches vertices for efficient rendering. You can access it directly for custom low-level rendering:
 
 ```csharp
 UIDrawList drawList = gui.Draw2D.DrawList;
@@ -214,16 +220,16 @@ Prowl's GUI input system tracks pointer position, button state, and keyboard key
 
 ```csharp
 // Pointer
-Vector2 pos = gui.PointerPos;
-bool leftDown = gui.IsPointerDown(MouseButton.Left);
-bool leftClick = gui.IsPointerClick(MouseButton.Left);
-bool doubleClick = gui.IsPointerDoubleClick(MouseButton.Left);
-Vector2 delta = gui.PointerDelta;
-float scroll = gui.PointerWheel;
+Vector2 pos        = gui.PointerPos;
+bool leftDown      = gui.IsPointerDown(MouseButton.Left);
+bool leftClick     = gui.IsPointerClick(MouseButton.Left);
+bool doubleClick   = gui.IsPointerDoubleClick(MouseButton.Left);
+Vector2 delta      = gui.PointerDelta;
+float scroll       = gui.PointerWheel;
 
 // Keyboard
-bool enterPressed = gui.IsKeyClick(Key.Enter);
-bool shiftHeld = gui.IsKeyDown(Key.ShiftLeft);
+bool enterPressed  = gui.IsKeyClick(Key.Enter);
+bool shiftHeld     = gui.IsKeyDown(Key.ShiftLeft);
 ```
 
 ### Interactables
@@ -243,7 +249,7 @@ using (gui.Node("MyWidget").Width(80).Height(30).Enter())
 }
 ```
 
-`Interactable` properties:
+`Interactable` members:
 
 | Member | Description |
 |---|---|
@@ -273,7 +279,7 @@ using (gui.Node("DropZone").Width(100).Height(100).Enter())
 
 ## GUI Animation
 
-`gui.AnimateBool` smoothly interpolates a `float` between `0` and `1` based on a `bool` state, persisting the animated value across frames using the current node's ID.
+`gui.AnimateBool` smoothly interpolates a `float` between `0` and `1` based on a `bool` state, persisting the animated value across frames using an auto-generated ID.
 
 ```csharp
 using (gui.Node("FadePanel").Width(200).Height(100).Enter())
@@ -304,7 +310,7 @@ using (gui.Node("Popup").IgnoreLayout().Left(mouseX).Top(mouseY).Width(150).Heig
 
 ## State Storage
 
-Store per-node values that survive across frames without declaring member fields:
+Store per-node values that survive across frames without declaring member fields. State values must be unmanaged types (`bool`, `int`, `float`, structs with no references):
 
 ```csharp
 using (gui.Node("Accordion").ExpandWidth().Height(30).Enter())

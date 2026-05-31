@@ -1,5 +1,5 @@
 ---
-title: 'Audio Playback and 3D Sound in Prowl Engine'
+title: 'Audio Playback, Spatial Sound, and AudioClips in Prowl'
 sidebarTitle: 'Audio'
 description: 'Play sounds in Prowl using AudioSource and AudioListener components, control volume and pitch, enable 3D positional audio, and load AudioClip assets.'
 ---
@@ -37,7 +37,7 @@ There is nothing else to configure. The component registers itself with `AudioSy
 
 ### AudioSource
 
-`AudioSource` is the workhorse component for scene-attached sounds. It manages its own `ActiveAudio` source internally and updates the 3D position every frame relative to the registered listener.
+`AudioSource` is the workhorse component for scene-attached sounds. It manages its own `ActiveAudio` source internally and updates the position every frame relative to the registered listener.
 
 | Property | Type | Default | Description |
 |---|---|---|---|
@@ -88,20 +88,20 @@ if (MusicClip.IsAvailable)
 }
 ```
 
-The `AudioClipImporter` handles `.wav`, `.wave`, and `.ogg` files. Once imported, the clip is cached in `AudioSystem` as an `AudioBuffer` so repeated calls to `PlaySound` do not re-upload data to the GPU.
+The `AudioClipImporter` handles `.wav`, `.wave`, and `.ogg` files. Once imported, the clip is cached in `AudioSystem` as an `AudioBuffer` so repeated calls to `PlaySound` do not re-upload data to the audio hardware.
 
 ## AudioSystem API
 
 For sounds that do not need a persistent scene object — explosions, UI clicks, one-shot voice lines — call `AudioSystem.PlaySound` directly. All overloads return an `ActiveAudio` handle.
 
 ```csharp
-// Simplest: play a clip at full volume from the listener's position
+// Simplest: play a clip at full volume, listener-relative (UI/music)
 ActiveAudio handle = AudioSystem.PlaySound(clip);
 
 // Play with custom volume and pitch
 ActiveAudio handle2 = AudioSystem.PlaySound(clip, volume: 0.5f, pitch: 1.2f);
 
-// Play at an absolute world-space position (3D)
+// Play at an absolute world-space position (3D positional sound)
 ActiveAudio handle3 = AudioSystem.PlaySound(
     clip,
     volume: 1f,
@@ -114,6 +114,15 @@ ActiveAudio handle3 = AudioSystem.PlaySound(
 <Tip>
 Use `AudioPositionKind.ListenerRelative` (the default) for UI sounds and music so they are never attenuated by distance. Use `AudioPositionKind.AbsoluteWorld` for any sound that should come from a point in the scene.
 </Tip>
+
+### PlaySound Overloads
+
+| Signature | Description |
+|---|---|
+| `PlaySound(AudioClip clip)` | Full volume, listener-relative. |
+| `PlaySound(AudioClip clip, float volume)` | Custom volume, listener-relative. |
+| `PlaySound(AudioClip clip, float volume, float pitch)` | Custom volume and pitch, listener-relative. |
+| `PlaySound(AudioClip clip, float volume, float pitch, Vector3 position, AudioPositionKind positionKind)` | Custom volume, pitch, and 3D position. |
 
 ## ActiveAudio Handle
 
@@ -140,7 +149,7 @@ public abstract class ActiveAudio : IDisposable
 ```csharp
 ActiveAudio music = AudioSystem.PlaySound(musicClip);
 music.Looping = true;
-music.Gain = 0.3f;   // background music at 30 % volume
+music.Gain = 0.3f;   // background music at 30% volume
 
 // Fade or stop later
 music.Stop();
@@ -222,7 +231,7 @@ music.Stop();
 
 ## AudioBuffer and AudioBufferPool
 
-`AudioBuffer` is the low-level GPU-side representation of decoded PCM data. `AudioSystem.GetAudioBuffer(clip)` lazily uploads the clip and caches the result in a dictionary keyed by `AudioClip` instance. You typically never need to create or destroy buffers manually — they live for the lifetime of the engine session and are disposed in `AudioSystem.Dispose()`.
+`AudioBuffer` is the low-level representation of decoded PCM data uploaded to the audio backend. `AudioSystem.GetAudioBuffer(clip)` lazily uploads the clip and caches the result in a dictionary keyed by `AudioClip` instance. You typically never need to create or destroy buffers manually — they live for the lifetime of the engine session and are disposed in `AudioSystem.Dispose()`.
 
 ```csharp
 // Internally used by AudioSystem — shown for reference

@@ -1,7 +1,7 @@
 ---
 title: 'MonoBehaviour API — Script Base Class Reference'
 sidebarTitle: 'MonoBehaviour'
-description: 'Full reference for Prowl's MonoBehaviour: all lifecycle methods, coroutine API, component accessors, and callback signatures.'
+description: 'Full reference for Prowl's MonoBehaviour script base class: lifecycle methods, coroutine API, component accessors, attributes, and callback signatures.'
 ---
 
 `MonoBehaviour` is the abstract base class for every script you attach to a `GameObject` in Prowl. You never instantiate it directly — instead you derive a class from it, add it to a `GameObject` via `AddComponent<T>()`, and override whichever lifecycle methods your script needs. The engine calls those methods at well-defined points in the frame: `Awake` once at creation, `Start` before the first active frame, `Update` every frame, `FixedUpdate` on physics ticks, and `LateUpdate` after all `Update` calls. `MonoBehaviour` also inherits the full identity, destruction, and cloning API from `EngineObject`, and mirrors the entire component query API of `GameObject` for convenience.
@@ -70,6 +70,15 @@ description: 'Full reference for Prowl's MonoBehaviour: all lifecycle methods, c
   ```
 </ResponseField>
 
+<ResponseField name="hideFlags" type="HideFlags">
+  Controls visibility of this component in the editor inspector and serialization output.
+
+  ```csharp
+  [HideInInspector]
+  public HideFlags hideFlags;
+  ```
+</ResponseField>
+
 <ResponseField name="HasAwoken" type="bool">
   `true` after `Awake` has been called. The engine checks this flag to ensure `Awake` is only called once.
 
@@ -87,7 +96,7 @@ description: 'Full reference for Prowl's MonoBehaviour: all lifecycle methods, c
 </ResponseField>
 
 <ResponseField name="ExecuteAlways" type="bool">
-  When `true` (set by `[ExecuteAlways]` attribute), lifecycle methods fire even when the game is not in play mode. Configurable at runtime but normally controlled by the attribute.
+  When `true` (set by `[ExecuteAlways]` attribute), lifecycle methods fire even when the game is not in play mode. Normally controlled by the attribute rather than set at runtime.
 
   ```csharp
   public bool ExecuteAlways { get; internal set; }
@@ -98,7 +107,7 @@ description: 'Full reference for Prowl's MonoBehaviour: all lifecycle methods, c
 
 ## Lifecycle Methods
 
-Override any of the following `virtual` methods in your derived class. You do **not** call the base implementation unless you explicitly need to chain behavior.
+Override any of the following `public virtual` methods in your derived class. You do **not** call the base implementation unless you explicitly need to chain behavior.
 
 <Tabs>
   <Tab title="Initialization">
@@ -191,7 +200,7 @@ public virtual void OnDestroy() { }
 
 ### OnLevelWasLoaded
 
-Called on every `MonoBehaviour` in a scene immediately after that scene finishes loading via `SceneManager.LoadScene`.
+Called on every `MonoBehaviour` in a scene immediately after that scene finishes loading via `SceneManager.LoadScene`. Not called during `SceneManager.RestoreScene`.
 
 ```csharp
 public virtual void OnLevelWasLoaded() { }
@@ -235,7 +244,7 @@ These methods are called by the rendering pipeline. They only fire on components
 </ResponseField>
 
 <ResponseField name="OnRenderImage" type="virtual void">
-  Called after the camera attached to this `GameObject` has rendered the scene. Implement post-processing effects here. Use `[ImageEffectOpaque]` to run before transparent geometry.
+  Called after the camera attached to this `GameObject` has rendered the scene. Implement post-processing effects here. Apply `[ImageEffectOpaqueAttribute]` to your class to run before transparent geometry.
 
   ```csharp
   public virtual void OnRenderImage(RenderTexture src, RenderTexture dest) { }
@@ -321,7 +330,7 @@ private IEnumerator FadeIn()
 
 ### StopCoroutine
 
-Stops the coroutine with the given method name. Has no effect if no coroutine with that name is running.
+Stops the coroutine with the given method name. Searches all three coroutine queues (regular, end-of-frame, and fixed-update). Has no effect if no coroutine with that name is running.
 
 ```csharp
 public void StopCoroutine(string methodName)
@@ -356,7 +365,7 @@ Use these inside a coroutine's `yield return` statement to pause execution.
 
 <Accordion title="WaitForSeconds">
 
-Suspends the coroutine for approximately `seconds` game-time seconds (measured against `Time.time`).
+Suspends the coroutine until `Time.time` reaches the value of `Time.time + seconds` at the moment of construction.
 
 ```csharp
 public class WaitForSeconds : YieldInstruction
@@ -367,7 +376,7 @@ public class WaitForSeconds : YieldInstruction
 ```
 
 ```csharp
-yield return new WaitForSeconds(2.5f); // wait 2.5 s
+yield return new WaitForSeconds(2.5f); // wait approx 2.5 s
 ```
 
 </Accordion>
@@ -407,8 +416,7 @@ You can yield a `Coroutine` handle returned by `StartCoroutine` to wait until th
 ```csharp
 public sealed class Coroutine : YieldInstruction
 {
-    internal bool isDone { get; private set; }
-    internal IEnumerator Enumerator { get; private set; }
+    // isDone and Enumerator are internal — managed by the engine
 }
 ```
 
@@ -487,7 +495,7 @@ public bool CompareTag(string otherTag)
 
 ## Sibling Index
 
-Controls the order of this component within the owning `GameObject`'s component list. Components are sorted by `[ExecutionOrder]` on `AddComponent`, but you can fine-tune with sibling index.
+Controls the order of this component within the owning `GameObject`'s component list. Components are sorted by `[ExecutionOrder]` on `AddComponent`, but you can fine-tune with sibling index. Returns `null` when the component has no owning `GameObject`.
 
 ```csharp
 public int? GetSiblingIndex()
@@ -540,7 +548,7 @@ Apply these attributes to your `MonoBehaviour` subclass to configure engine beha
     Declares component dependencies. Prowl automatically adds missing required types when this component is added to a `GameObject`, and prevents removal if a dependent is present.
 
     ```csharp
-    [RequireComponent(typeof(Transform), typeof(Rigidbody))]
+    [RequireComponent(typeof(Rigidbody))]
     public class Vehicle : MonoBehaviour { }
     ```
 
@@ -552,7 +560,7 @@ Apply these attributes to your `MonoBehaviour` subclass to configure engine beha
 
 ### Image Effect Attributes
 
-These attributes modify the behavior of `OnRenderImage` callbacks.
+These attributes are applied at the **class** level to modify the behavior of `OnRenderImage` callbacks.
 
 | Attribute | Effect |
 |-----------|--------|

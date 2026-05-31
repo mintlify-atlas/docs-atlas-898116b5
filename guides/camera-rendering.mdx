@@ -19,8 +19,8 @@ Camera cam = camObject.AddComponent<Camera>();
 cam.FieldOfView   = 60f;
 cam.NearClipPlane = 0.01f;
 cam.FarClipPlane  = 1000f;
-cam.Depth         = 0;        // Lower values render first
-cam.HDR           = true;
+cam.Depth         = -1;       // Default depth; lower values render first
+cam.HDR           = false;
 ```
 
 <Note>
@@ -58,13 +58,13 @@ Cameras support two projection types controlled by `Camera.projectionType`.
 
 <CardGroup cols={2}>
   <Card title="FieldOfView" icon="eye">
-    Vertical field of view in degrees (perspective mode only). Typical values range from 50° to 90°. Use `Camera.IsOrthographic` to check the active mode.
+    Vertical field of view in degrees (perspective mode only). Defaults to `60f`. Typical values range from 50° to 90°. Use `Camera.IsOrthographic` to check the active mode.
   </Card>
   <Card title="NearClipPlane / FarClipPlane" icon="arrows-left-right">
     Objects closer than `NearClipPlane` or farther than `FarClipPlane` are not rendered. Keep the ratio `Far/Near` as small as practical to avoid depth precision issues.
   </Card>
   <Card title="Depth" icon="layer-group">
-    Render order among multiple cameras. `SceneManager.Draw()` sorts cameras ascending by `Depth`. Cameras with lower `Depth` render first (i.e., behind higher-depth cameras).
+    Render order among multiple cameras. `SceneManager.Draw()` sorts cameras ascending by `Depth`. Cameras with lower `Depth` render first (i.e., behind higher-depth cameras). Defaults to `-1`.
   </Card>
   <Card title="CullingMask" icon="filter">
     A `LayerMask` that controls which object layers this camera renders. Use it to exclude UI objects from a world camera, or to dedicate a second camera purely to UI.
@@ -73,7 +73,7 @@ Cameras support two projection types controlled by `Camera.projectionType`.
     Scales the internal render resolution relative to the target framebuffer. `1.0` is native resolution; `0.5` renders at half resolution for performance; `2.0` for supersampling.
   </Card>
   <Card title="HDR" icon="sun">
-    When enabled, the forward buffer uses a 16-bit float format (`R16_G16_B16_A16_Float`) instead of 8-bit (`R8_G8_B8_A8_UNorm`), enabling physically based lighting ranges and Bloom.
+    When enabled, the forward buffer uses a 16-bit float format (`R16_G16_B16_A16_Float`) instead of 8-bit (`R8_G8_B8_A8_UNorm`), enabling physically based lighting ranges and Bloom. Defaults to `false`.
   </Card>
 </CardGroup>
 
@@ -100,10 +100,10 @@ cam.ClearColor = new Color(0.1f, 0.1f, 0.2f, 1f);
 By default a camera renders to the screen swapchain. Assign a `RenderTexture` to `Camera.Target` to redirect output — useful for minimap cameras, security-camera monitors, or reflection probes.
 
 ```csharp
-// Create a render texture at 512×512 with an HDR color buffer
-RenderTexture minimapRT = new RenderTexture(512, 512,
-    new[] { Veldrid.PixelFormat.R8_G8_B8_A8_UNorm },
-    Veldrid.PixelFormat.D16_UNorm);
+// Create a render texture at 512×512
+RenderTexture minimapRT = RenderTexture.GetTemporaryRT(
+    512, 512,
+    new[] { Veldrid.PixelFormat.R8_G8_B8_A8_UNorm });
 
 Camera minimapCam = minimapObject.AddComponent<Camera>();
 minimapCam.Target = minimapRT;
@@ -123,7 +123,7 @@ Every camera uses a `RenderPipeline` asset to define how the scene is rendered. 
 
 ```csharp
 // SceneManager.Draw() — the exact loop that runs each frame
-foreach (Camera cam in cameras)  // sorted by Depth
+foreach (Camera cam in cameras)  // sorted ascending by Depth
 {
     RenderPipeline pipeline = cam.Pipeline.Res ?? DefaultRenderPipeline.Default;
     pipeline.Render(cam, new RenderingData());
@@ -145,7 +145,7 @@ public class WireframeRenderPipeline : RenderPipeline
         cmd.SetRenderTarget(target);
         cmd.ClearRenderTarget(true, true, Color.black);
 
-        // Draw all batches using only their ShadowCaster pass as a wireframe stand-in
+        // Draw all batches using the ShadowCaster pass
         foreach (RenderBatch batch in EnumerateBatches())
         {
             cmd.ApplyPropertyState(batch.material._properties);
@@ -212,7 +212,7 @@ MonoBehaviour components on the same `GameObject` as the camera receive renderin
 
 | Callback | When it fires |
 |---|---|
-| `OnPreCull(Camera camera)` | Before the camera culls renderables — use it to force `DepthTextureMode` flags |
+| `OnPreCull(Camera camera)` | Before the camera culls renderables — use it to set `DepthTextureMode` flags |
 | `OnPreRender(Camera camera)` | After culling, just before geometry is drawn |
 | `OnPostRender(Camera camera)` | After all rendering for the camera is complete |
 | `OnRenderImage(RenderTexture src, RenderTexture dest)` | Post-processing — blit from `src` to `dest` |

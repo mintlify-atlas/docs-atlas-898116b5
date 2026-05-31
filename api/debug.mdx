@@ -1,7 +1,7 @@
 ---
-title: 'Debug API — Logging and Diagnostics in Prowl'
+title: 'Debug API — Logging, Gizmos, and Diagnostics in Prowl'
 sidebarTitle: 'Debug'
-description: 'Reference for Prowl's Debug class: log messages, warnings, errors, and exceptions to the editor console with filtering and severity levels.'
+description: 'Reference for Prowl's Debug class: log messages, warnings, errors, and exceptions to the editor console, plus gizmo drawing for scene-view overlays.'
 ---
 
 The `Debug` class is Prowl's unified diagnostics hub. It routes structured log messages to the editor Console Window, captures C# stack traces for every log entry, fires an `OnLog` event so any subsystem can subscribe to log output, and provides assert and guard helpers for defensive programming. Beyond logging, `Debug` is also the entry point for the engine's gizmo drawing system — the visual overlays used in the Scene View to visualise colliders, paths, and other editor-only geometry. Every log call captures a `DebugStackTrace` at a cost of roughly 15 µs on modern hardware, which is acceptable for debugging but should be avoided in tight inner loops in shipping builds.

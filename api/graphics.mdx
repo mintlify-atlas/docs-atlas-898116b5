@@ -1,7 +1,7 @@
 ---
-title: 'Graphics API — Draw, Blit, and GPU Control'
+title: 'Graphics API — Draw, Blit, and GPU Resource Control'
 sidebarTitle: 'Graphics'
-description: 'Reference for Prowl's static Graphics class: access the Veldrid device, draw meshes, blit textures, submit command buffers, and manage GPU resources.'
+description: 'Reference for Prowl's Graphics class: access the Veldrid device, draw meshes, blit textures, submit command buffers, and manage GPU resources.'
 ---
 
 The `Graphics` class is the central hub for all low-level GPU operations in Prowl. It wraps a [Veldrid](https://github.com/veldrid/veldrid) `GraphicsDevice`, exposes the active rendering backend, and provides high-level helpers for drawing meshes, blitting textures, submitting recorded command buffers, and managing GPU resource lifetimes. Every operation that touches the GPU — from a simple texture blit to a full scene draw — flows through or is coordinated by this static class.

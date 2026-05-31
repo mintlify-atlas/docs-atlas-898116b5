@@ -1,7 +1,7 @@
 ---
-title: 'Create and Configure a Prowl Project'
+title: 'Prowl Game Engine — Project Setup and Configuration'
 sidebarTitle: 'Project Setup'
-description: 'Create a new Prowl project from the editor, understand the project folder structure, and configure build and asset pipeline settings.'
+description: 'Create a new Prowl project from the editor, explore the project folder structure, add C# scripts, configure project settings, and trigger your first build.'
 ---
 
 Every game built with Prowl lives inside a **project** — a self-contained directory that holds your assets, scripts, scenes, and generated build artifacts. The editor's Projects window is the first thing you see on startup, and it is where you create or open projects. Once a project is open the editor compiles your C# scripts into assemblies on the fly, tracks every asset by a stable GUID, and provides settings panels for adjusting everything from frame-rate targets to import caching behavior.
@@ -49,8 +49,9 @@ After creation, a Prowl project directory contains the following layout:
 ```
 MyProject/
 ├── Assets/          # All your game assets (textures, models, scenes, scripts, …)
-├── Library/         # Asset import cache — auto-generated, safe to delete
+├── Config/          # Editor and project preference files (hotkeys, window layout, etc.)
 ├── Defaults/        # Engine default assets (meshes, materials, shaders) — do not edit
+├── Library/         # Asset import cache — auto-generated, safe to delete
 ├── Packages/        # Third-party packages installed into this project
 ├── Temp/            # Compiled script assemblies and other transient data
 ├── CSharp.csproj           # Auto-generated .NET project for your game scripts
@@ -92,7 +93,21 @@ When the asset pipeline processes a source file it writes the result into `Libra
 
 ### Custom Importers
 
-You can register a custom importer by creating a class that inherits from the appropriate base importer and decorating it with `[Importer]`. The engine discovers all importer types at startup via `ImporterAttribute.GenerateLookUp()`.
+You can register a custom importer by creating a class that inherits from `ScriptedImporter` and decorating it with `[Importer]`, providing a file icon name, the asset's general C# type, and one or more file extensions. The engine discovers all importer types at startup (via `ImporterAttribute.GenerateLookUp()`, which is invoked automatically on assembly load).
+
+```csharp
+using Prowl.Editor.Assets;
+using Prowl.Runtime.Utils;
+
+[Importer("FileIcon.png", typeof(MyAssetType), ".myext")]
+public class MyAssetImporter : ScriptedImporter
+{
+    public override void Import(SerializedAsset ctx, FileInfo assetPath)
+    {
+        // Load and process assetPath, then call ctx.SetMainObject(...)
+    }
+}
+```
 
 ## Project Settings
 
@@ -137,9 +152,14 @@ Prowl compiles all `.cs` files under `Assets/` into a runtime assembly (`CSharp.
 
     public class MyBehaviour : MonoBehaviour
     {
+        public override void Start()
+        {
+            Debug.Log("Start");
+        }
+
         public override void Update()
         {
-            // Called every frame
+            Debug.Log("Update");
         }
     }
     ```

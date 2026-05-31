@@ -1,10 +1,10 @@
 ---
-title: 'Texture Types and RenderTexture in Prowl'
+title: 'Textures API — Texture2D and RenderTexture in Prowl'
 sidebarTitle: 'Textures'
-description: 'Reference for Prowl texture types: Texture2D, Texture3D, TextureCubemap, Texture2DArray, RenderTexture, and TextureSampler configuration.'
+description: 'Reference for Prowl's Texture2D, RenderTexture, and TextureSampler: create GPU textures, upload pixel data, read back pixels, and use the RT pool.'
 ---
 
-Prowl's texture system is built on top of Veldrid and provides strongly-typed wrappers for every GPU texture variety. The abstract `Texture` base class handles resource creation, mipmap generation, CPU-to-GPU data upload, and GPU-to-CPU readback. Concrete types — `Texture2D`, `RenderTexture`, and others — add dimension-specific APIs. `RenderTexture` is the engine's off-screen render target, pairing colour and depth `Texture2D` buffers with a Veldrid `Framebuffer` and a pool system for temporary allocations. Every texture carries a `TextureSampler` that controls filtering and address-mode behaviour at the shader level.
+Prowl's texture system is built on top of Veldrid and provides strongly-typed wrappers for GPU texture resources. The abstract `Texture` base class handles resource creation, mipmap generation, CPU-to-GPU data upload, and GPU-to-CPU readback. `Texture2D` is the most common 2D image type, while `RenderTexture` is the engine's off-screen render target — pairing colour and depth `Texture2D` buffers with a Veldrid `Framebuffer` and a pool system for temporary allocations. Every texture carries a `TextureSampler` that controls filtering and address-mode behaviour at the shader level. Additional specialised types (`Texture3D`, `TextureCubemap`, `Texture2DArray`) exist in `Prowl.Runtime.Rendering` for volumetric and array use cases.
 
 ## Texture (abstract base)
 
@@ -114,6 +114,7 @@ Several static `AssetRef<Texture2D>` properties provide built-in default texture
 | `Texture2D.Gray` | 1×1 50% grey texture |
 | `Texture2D.Normal` | 1×1 flat normal map (0.5, 0.5, 1.0) |
 | `Texture2D.Red` | 1×1 red texture |
+| `Texture2D.Surface` | Default PBR surface texture |
 | `Texture2D.Grid` | Default grid texture |
 | `Texture2D.EmptyRW` | 1×1 black storage (read-write) texture |
 

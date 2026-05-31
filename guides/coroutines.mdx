@@ -8,7 +8,7 @@ Coroutines let you write logic that spans multiple frames in a straight-line sty
 
 ## How Coroutines Work
 
-A coroutine is started with `StartCoroutine(string methodName)` — passing the name of a method on the same `MonoBehaviour` that returns `IEnumerator`. The engine creates a `Coroutine` object that wraps an `IEnumerator` state machine and advances it each frame (or each fixed step, depending on the yield instruction in use).
+A coroutine is started with `StartCoroutine(string methodName)` — passing the name of a method on the same `MonoBehaviour` that returns `IEnumerator`. The engine uses reflection to locate the method by name, invokes it, and wraps the resulting `IEnumerator` in a `Coroutine` object that advances each frame (or each fixed step, depending on the yield instruction in use).
 
 Coroutines are tracked by method name inside three separate internal dictionaries:
 
@@ -25,7 +25,7 @@ public class Intro : MonoBehaviour
 {
     public override void Start()
     {
-        // Start by method name — simplest form
+        // Start by method name
         StartCoroutine("PlayIntroSequence");
     }
 
@@ -78,7 +78,7 @@ Prowl provides three built-in yield instructions, all inheriting from `MonoBehav
 
 <CardGroup cols={3}>
   <Card title="WaitForSeconds" icon="clock">
-    Suspends the coroutine until `seconds` of **scaled** game time have elapsed. Uses `Time.time` internally.
+    Suspends the coroutine until `seconds` of **scaled** game time have elapsed. Stores the target end-time (`Time.time + seconds`) at construction.
   </Card>
   <Card title="WaitForEndOfFrame" icon="display">
     Suspends until after all cameras and GUI have rendered for the current frame, just before the frame is displayed.
@@ -102,7 +102,7 @@ IEnumerator CountDown()
 }
 ```
 
-`WaitForSeconds` captures `Time.time + seconds` at construction. Because it uses scaled time, pausing the game (`Time.timeScale = 0`) will also pause any pending `WaitForSeconds` yields.
+`WaitForSeconds` captures `Time.time + seconds` at construction as the target end-time. Because it uses scaled time, pausing the game (`Time.timeScale = 0`) will also pause any pending `WaitForSeconds` yields.
 
 ### WaitForEndOfFrame
 
@@ -130,7 +130,7 @@ IEnumerator ApplyBlast(Vector3 center, float radius, float force)
 
 ## Chaining Coroutines
 
-You can yield on another `Coroutine` object to wait for it to finish before continuing:
+You can yield on another `Coroutine` object to wait for it to finish before continuing. `Coroutine` itself extends `YieldInstruction`, so the engine knows to pause the outer coroutine until the inner one completes.
 
 ```csharp
 public override void Start()
@@ -282,8 +282,8 @@ IEnumerator RunCutscene()
   <Card title="Scaled time pauses WaitForSeconds" icon="hourglass-half">
     `WaitForSeconds` uses `Time.time`, which is affected by `Time.timeScale`. Setting `timeScale = 0` to pause the game will also freeze all pending `WaitForSeconds` yields.
   </Card>
-  <Card title="Unique names per component" icon="tag">
-    Coroutine names must be unique per `MonoBehaviour` instance. Starting a coroutine with the same method name as one already running adds a second entry alongside the first — they do not cancel each other.
+  <Card title="Starting a duplicate name throws" icon="tag">
+    Coroutine names are stored as dictionary keys per `MonoBehaviour` instance. Starting a coroutine whose method name is already running will throw a runtime exception. Call `StopCoroutine` first if you need to restart one.
   </Card>
   <Card title="Coroutines are not threads" icon="microchip">
     Coroutines run on the main thread between frames. They cannot do parallel work. For CPU-heavy tasks that must not block rendering, use `System.Threading.Tasks.Task` or `async/await` instead.

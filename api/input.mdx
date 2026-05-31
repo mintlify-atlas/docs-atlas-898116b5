@@ -1,7 +1,7 @@
 ---
-title: 'Input API — Keyboard, Mouse, and Handlers'
+title: 'Input API — Keyboard, Mouse, and Handler Stack in Prowl'
 sidebarTitle: 'Input'
-description: 'Reference for Prowl's static Input class: query keyboard and mouse state, control cursor visibility, access clipboard, and manage input handler stack.'
+description: 'Reference for Prowl's Input class: query keyboard and mouse state, control cursor visibility, access clipboard, and manage the input handler stack.'
 ---
 
 Prowl's input system is layered around a stack of `IInputHandler` implementations. The `Input` static class simply delegates every query to the handler on top of the stack — `Input.Current`. This design lets the editor, the game viewport, and UI subsystems push their own handlers to intercept or block input without affecting each other. The default game handler is `DefaultInputHandler`, which bridges Veldrid's raw input events into Prowl's `Key` and `MouseButton` enums. All keyboard and mouse state queries follow a three-state model: **held** (`GetKey`), **pressed this frame** (`GetKeyDown`), and **released this frame** (`GetKeyUp`).
@@ -200,10 +200,10 @@ public interface IInputHandler
     bool IsAnyKeyDown { get; }
     IReadOnlyList<char> InputString { get; set; }
 
-    Vector2   MouseDelta        { get; }
-    Vector2Int MousePosition    { get; set; }
-    float      MouseWheelDelta  { get; }
-    Vector2Int PrevMousePosition { get; }
+    Vector2    MouseDelta         { get; }
+    Vector2Int MousePosition      { get; set; }
+    float      MouseWheelDelta    { get; }
+    Vector2Int PrevMousePosition  { get; }
 
     bool CursorVisible { get; set; }
     bool CursorLocked  { get; set; }
@@ -219,6 +219,10 @@ public interface IInputHandler
     bool GetMouseButtonUp(MouseButton button);
 }
 ```
+
+<ResponseField name="IsAnyKeyDown" type="bool">
+  `true` if any key is currently pressed. Provided by the active `IInputHandler`; not directly exposed on the `Input` static class.
+</ResponseField>
 
 ---
 

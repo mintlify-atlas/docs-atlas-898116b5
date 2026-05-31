@@ -15,7 +15,7 @@ The `Application` class is the static entry point for every Prowl runtime sessio
 ## Properties
 
 <ResponseField name="IsRunning" type="bool">
-  `true` from the moment the window opens until `AppClose` fires. Set to `false` automatically at shutdown; you can read this field to detect whether the engine loop is still active.
+  `true` from the moment `Run(...)` is called until `AppClose` fires. Set to `false` as the first action of the shutdown sequence, before `Quitting` is invoked. Read this field to detect whether the engine loop is still active.
 
   ```csharp
   public static bool IsRunning;
@@ -23,7 +23,7 @@ The `Application` class is the static entry point for every Prowl runtime sessio
 </ResponseField>
 
 <ResponseField name="IsPlaying" type="bool">
-  `true` when the game simulation is running. In a standalone build this is always `true`. In the Prowl Editor it is `false` while in edit mode and `true` while the Play button is active.
+  `true` when the game simulation is running. In a standalone build this is set to `true` immediately inside `Run(...)` and stays `true` for the entire session. In the Prowl Editor it is `false` while in edit mode and `true` while the Play button is active.
 
   ```csharp
   public static bool IsPlaying = false;
@@ -78,7 +78,7 @@ All four events follow the `Action` delegate (no parameters, no return value). S
 </ResponseField>
 
 <ResponseField name="Update" type="event Action">
-  Fires once per frame **before** `Render`. The engine's internal `AppUpdate` method pushes a `TimeData` stack frame, invokes audio pooling, then raises this event. Scene update logic and input polling belong here.
+  Fires once per frame. The engine's internal `AppUpdate` method updates the time data, pushes a `TimeData` stack frame, invokes audio pooling, then raises `Update` followed immediately by `Render` within the same frame. Scene update logic and input polling belong here.
 
   ```csharp
   public static event Action Update;
@@ -86,7 +86,7 @@ All four events follow the `Action` delegate (no parameters, no return value). S
 </ResponseField>
 
 <ResponseField name="Render" type="event Action">
-  Fires once per frame **after** `Update`, still within the same `TimeData` scope. Camera rendering, post-processing, and UI drawing should subscribe here.
+  Fires once per frame **after** `Update`, still within the same `AppUpdate` call and the same `TimeData` scope. Camera rendering, post-processing, and UI drawing should subscribe here.
 
   ```csharp
   public static event Action Render;
@@ -94,7 +94,7 @@ All four events follow the `Action` delegate (no parameters, no return value). S
 </ResponseField>
 
 <ResponseField name="Quitting" type="event Action">
-  Fires when the application is closing, before graphics and audio are disposed. Use this to flush save data, release unmanaged handles, or log shutdown telemetry.
+  Fires when the application is closing, after `IsRunning` is set to `false` and before graphics and audio are disposed. Use this to flush save data, release unmanaged handles, or log shutdown telemetry.
 
   ```csharp
   public static event Action Quitting;
@@ -107,14 +107,14 @@ All four events follow the `Action` delegate (no parameters, no return value). S
 
 ### Run
 
-Starts the full engine loop. This call **blocks** until the window is closed.
+Starts the full engine loop. This call **blocks** until the window is closed. For standalone (non-editor) builds, `IsPlaying` is set to `true` immediately inside this method.
 
 ```csharp
 public static void Run(string title, int width, int height, IAssetProvider assetProvider, bool editor)
 ```
 
 <ParamField path="title" type="string" required>
-  The base window title. The active graphics backend name is appended automatically, e.g. `"My Game — OpenGL"`.
+  The base window title. The active graphics backend name is appended automatically, e.g. `"My Game - OpenGL"`.
 </ParamField>
 
 <ParamField path="width" type="int" required>
@@ -183,7 +183,7 @@ public static GraphicsBackend GetBackend()
 ```
 
 <ResponseField name="returns" type="GraphicsBackend">
-  The first backend in the platform's preferred list (the engine currently returns index `[0]`).
+  The first backend in the platform's preferred list (index `[0]`).
 </ResponseField>
 
 ```csharp
@@ -211,7 +211,8 @@ Application.Run(...)
   │
   └─► [per-frame loop]
         └─► AppUpdate()
-              ├─ Time.TimeStack.Push(...)
+              ├─ s_appTime.Update()
+              ├─ Time.TimeStack.Push(s_appTime)
               ├─ AudioSystem.UpdatePool()
               ├─ Application.Update?.Invoke()        ← your code
               ├─ Application.Render?.Invoke()        ← your code
@@ -219,6 +220,7 @@ Application.Run(...)
 
   [window closes]
   └─► AppClose()
+        ├─ IsRunning = false
         ├─ Application.Quitting?.Invoke()            ← your code
         ├─ Graphics.Dispose()
         ├─ Physics.World.Clear()

@@ -1,7 +1,7 @@
 ---
-title: 'Custom Asset Importers in the Prowl Pipeline'
+title: 'Writing Custom Asset Importers in the Prowl Pipeline'
 sidebarTitle: 'Asset Importers'
-description: 'Create custom asset importers for new file types in Prowl by extending ScriptedImporter, registering with ImporterAttribute, and returning serialized assets.'
+description: 'Create custom asset importers for new file types in Prowl by extending ScriptedImporter, registering via ImporterAttribute, and serializing assets.'
 ---
 
 Every file in your Prowl project's `Assets/` folder is processed by an **importer** before it becomes a usable runtime object. Importers read the raw file bytes, convert them into one or more `EngineObject` instances, and store the result as a `.prowl` binary package in the library cache. When you drag a `.png` into the editor it is immediately processed by `TextureImporter`; a `.fbx` goes through `ModelImporter`; a `.cs` script triggers `MonoScriptImporter` and a script reload. You can extend this pipeline for any file type by subclassing `ScriptedImporter` and decorating your class with `[Importer]`.
@@ -13,7 +13,7 @@ Every file in your Prowl project's `Assets/` folder is processed by an **importe
     Handles `.wav`, `.wave`, `.ogg`. Decodes PCM or Vorbis audio into an `AudioClip` asset with sample rate, channel count, and bit-depth metadata.
   </Card>
   <Card title="TextureImporter" icon="image">
-    Handles `.png`, `.jpg`, `.bmp`, `.tga`, `.dds`, `.webp`, `.tif`, `.gif`. Uploads to a `Texture2D` with configurable mip-map generation, wrap mode, and filter types.
+    Handles `.png`, `.bmp`, `.jpg`, `.jpeg`, `.tga`, `.dds`, `.pbm`, `.webp`, `.tif`, `.tiff`, `.gif`. Uploads to a `Texture2D` with configurable mip-map generation, wrap mode, and filter types.
   </Card>
   <Card title="ModelImporter" icon="cube">
     Handles `.obj`, `.fbx`, `.gltf`, `.dae`, `.blend`, `.ply`, `.stl`, `.pmx` via AssimpNet. Produces a `GameObject` hierarchy as the main asset, with `Mesh`, `Material`, and `AnimationClip` sub-assets.
@@ -101,7 +101,7 @@ public class ImporterAttribute : Attribute
 }
 ```
 
-Prowl scans all loaded assemblies for `[Importer]`-decorated types on startup (via `[OnAssemblyLoad]`) and builds an extension-to-importer lookup table. If two importers register the same extension, the second one wins and a warning is logged.
+Prowl scans all loaded assemblies for `[Importer]`-decorated types on startup (via `ImporterAttribute.GenerateLookUp`, called by `[OnAssemblyLoad]`) and builds an extension-to-importer lookup table. If two importers register the same extension, the second one overwrites the first and an error is logged.
 
 ```csharp
 // Example: register for .csv files, producing a TextAsset

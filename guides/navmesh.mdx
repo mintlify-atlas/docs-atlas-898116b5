@@ -1,5 +1,5 @@
 ---
-title: 'Navigation Mesh and AI Agents in Prowl'
+title: 'Navigation Meshes and AI Agent Pathfinding in Prowl'
 sidebarTitle: 'NavMesh'
 description: 'Bake navigation meshes with NavMeshSurface and move AI agents along computed paths using NavMeshAgent in Prowl Engine via DotRecast.'
 ---
@@ -52,7 +52,7 @@ All build parameters live in `NavMeshSurface.BuildSettings`, exposed in the Insp
         surface.staticGeometry.Add(rb);
 
     // Filter by layer so walkways go in but trigger volumes stay out
-    surface.GeometryLayers = LayerMask.FromLayer(0); // layer 0 only
+    surface.GeometryLayers = LayerMask.Everything;
     ```
   </Tab>
   <Tab title="Mesh Renderers">
@@ -105,7 +105,7 @@ All build parameters live in `NavMeshSurface.BuildSettings`, exposed in the Insp
 NavMeshAgent agent = GetComponent<NavMeshAgent>();
 
 agent.radius               = 0.5f;   // Physical radius used for crowd separation
-agent.height               = 1.8f;   // Agent height for path clearance
+agent.height               = 1.0f;   // Agent height for path clearance
 agent.maxAcceleration      = 8.0f;   // Acceleration (m/s²)
 agent.maxSpeed             = 3.5f;   // Maximum movement speed (m/s)
 agent.collisionQueryRange  = 5.0f;   // Radius for detecting nearby crowd agents
@@ -124,19 +124,21 @@ When `Surface` is set, the agent is automatically registered with the crowd (`Na
 
 ### Moving to a Destination
 
-Use `NavMeshSurface.MoveToTarget` to send a specific agent to a world-space position:
+Use `NavMeshSurface.MoveToTarget` to send a specific agent to a world-space position. Because the nav mesh is built in the surface's local coordinate space, convert the world-space destination first:
 
 ```csharp
 NavMeshSurface surface = agent.Surface;
 Vector3 worldDestination = player.Transform.position;
 
-// Convert to the surface's local space, then request move
-RcVec3f localPos = new RcVec3f(
-    (float)worldDestination.x,
-    (float)worldDestination.y,
-    (float)worldDestination.z);
+// Convert world position to surface local space before passing to MoveToTarget
+Vector3 localPos = surface.Transform.InverseTransformPoint(worldDestination);
 
-surface.MoveToTarget(agent, localPos, adjust: false);
+RcVec3f rcPos = new RcVec3f(
+    (float)localPos.x,
+    (float)localPos.y,
+    (float)localPos.z);
+
+surface.MoveToTarget(agent, rcPos, adjust: false);
 ```
 
 Setting `adjust: true` asks the crowd to match a target velocity rather than seek a point — useful for kinematic steering or formation movement.
@@ -187,7 +189,7 @@ public class EnemyChase : MonoBehaviour
 
     private void SetDestination(Vector3 worldPos)
     {
-        // Positions are stored in NavMeshSurface local space
+        // Convert world position to NavMeshSurface local space
         Vector3 localPos = navSurface.Transform.InverseTransformPoint(worldPos);
 
         RcVec3f rcPos = new RcVec3f(

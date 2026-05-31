@@ -1,5 +1,5 @@
 ---
-title: 'Scripting in Prowl with C# and MonoBehaviour'
+title: 'Scripting Gameplay in Prowl with C# and MonoBehaviour'
 sidebarTitle: 'Scripting'
 description: 'Write game logic in C# by extending MonoBehaviour, using the Prowl scripting lifecycle, attributes, coroutines, and ScriptableObjects.'
 ---
@@ -22,12 +22,12 @@ All gameplay logic in Prowl is written in C# (.NET 9) by extending `MonoBehaviou
 
     public class PlayerController : MonoBehaviour
     {
-        public float moveSpeed = 5f;
+        public double moveSpeed = 5.0;
 
         public override void Update()
         {
-            float h = Input.GetAxis("Horizontal");
-            float v = Input.GetAxis("Vertical");
+            double h = (Input.GetKey(Key.D) ? 1 : 0) - (Input.GetKey(Key.A) ? 1 : 0);
+            double v = (Input.GetKey(Key.W) ? 1 : 0) - (Input.GetKey(Key.S) ? 1 : 0);
             Transform.position += new Vector3(h, 0, v) * moveSpeed * Time.deltaTime;
         }
     }
@@ -363,8 +363,8 @@ When you edit a C# source file and save it, Prowl's `AssemblyManager` recompiles
 
 1. `[OnAssemblyUnload]` callbacks are invoked (clears component caches, reflection caches, etc.).
 2. Assemblies are swapped.
-3. `[OnAssemblyLoad]` callbacks are invoked (re-populates lookup tables, re-discovers importers, etc.).
-4. `AssemblyMethodAttributeBase.FindAll()` scans all loaded assemblies for new callbacks.
+3. `AssemblyMethodAttributeBase.FindAll()` scans all loaded assemblies for new attribute callbacks.
+4. `[OnAssemblyLoad]` callbacks are invoked (re-populates lookup tables, re-discovers importers, etc.).
 
 <Warning>
 Static fields are reset on assembly reload. If you cache runtime data in a static field (e.g. a singleton instance), ensure you rebuild it inside an `[OnAssemblyLoad]` method or use `ScriptableSingleton<T>` which persists across reloads.

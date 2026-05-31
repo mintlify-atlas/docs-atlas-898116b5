@@ -1,7 +1,7 @@
 ---
-title: 'Prowl Engine: Open-Source C# 3D Game Engine'
+title: 'Prowl Engine: Open-Source Unity-Like C# Game Engine'
 sidebarTitle: 'Introduction'
-description: 'Prowl is an MIT-licensed, Unity-inspired 3D game engine in C# for .NET 9 with PBR rendering, a full editor, physics, audio, and navigation.'
+description: 'Prowl is an MIT-licensed, Unity-inspired C# 3D game engine on .NET 9, featuring PBR rendering, a full editor, physics, audio, and navmesh navigation.'
 ---
 
 Prowl is an open-source game engine built entirely in C# on .NET 9, designed to give developers a familiar, Unity-like workflow while remaining as lean and customizable as possible. If you have shipped or prototyped with Unity, you will recognize the `GameObject`/`Component` paradigm, coroutines, `ScriptableObject`, and a near-identical scripting API — the goal is that porting existing Unity projects requires minimal friction. Prowl is currently in **early development** and is not yet stable for production use, but its core systems are functional and it welcomes contributors and enthusiasts who want to help shape its future.
@@ -45,6 +45,10 @@ Prowl's audio system uses **OpenAL** through a modular backend design. Currently
 ### DotRecast Navmesh & AI Agents
 
 Navigation and AI pathfinding are handled by **Prowl.DotRecast** (a C# port of the Recast & Detour libraries). This provides runtime navmesh generation and agent steering — the same proven technology used across the games industry.
+
+### Node Graph
+
+Prowl includes a built-in **Node Graph** system (based on Unity's xNode) for creating visual data-flow graphs. This is the foundation for material graphs, behaviour trees, or any other node-based tool you need to build.
 
 ### Asset Pipeline
 

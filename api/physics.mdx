@@ -1,7 +1,7 @@
 ---
-title: 'Physics API — Raycast and World Control'
+title: 'Physics API — Raycasting and Layer Collisions in Prowl'
 sidebarTitle: 'Physics'
-description: 'Reference for Prowl's static Physics class: raycast overloads, layer collision matrix, PhysicsSetting configuration, and access to the Jitter2 World.'
+description: 'Reference for Prowl's Physics class: all Raycast overloads, the layer collision matrix, PhysicsSetting configuration, and access to the Jitter2 World.'
 ---
 
 Prowl's physics system is powered by [Jitter2](https://github.com/notgiven688/jitterphysics2), a high-performance rigid-body simulation library for .NET. The static `Physics` class wraps Jitter2's `World` object and exposes it through a Prowl-idiomatic API: raycasting with optional max-distance and layer-mask filtering, a symmetric layer collision matrix for controlling which game-object layers interact, and a `PhysicsSetting` singleton that is serialised as a project setting. The physics step is advanced each frame by `Physics.Update()`, which accumulates time and fires fixed-timestep substeps to keep the simulation stable regardless of frame rate.

@@ -1,14 +1,14 @@
 ---
-title: 'Build and Package Your Prowl Game for Desktop'
+title: 'Packaging and Distributing Your Prowl Desktop Game'
 sidebarTitle: 'Building'
 description: 'Compile and package a Prowl game for Windows, Linux, or macOS using the editor Build Window, DesktopPlayerBuilder, and the standalone player.'
 ---
 
-When your game is ready to ship, Prowl's build pipeline compiles your C# scripts, bundles all referenced assets, and outputs a self-contained executable alongside a `GameData/` directory. The whole process is orchestrated through the **Build Window** in the editor, which drives the `Desktop_Player` builder — a concrete implementation of the abstract `ProjectBuilder` class. The result is a standalone `.exe` (or platform-native binary) that depends only on the .NET 9 runtime and your bundled assets, with no editor code included.
+When your game is ready to ship, Prowl's build pipeline compiles your C# scripts, bundles all referenced assets, and outputs a self-contained executable alongside a `GameData/` directory. The whole process is orchestrated through the **Build Window** in the editor, which drives the `Desktop_Player` builder — a concrete implementation of the abstract `ProjectBuilder` class. The result is a standalone executable (platform-native binary) that depends only on the .NET 9 runtime and your bundled assets, with no editor code included.
 
 ## Opening the Build Window
 
-In the Prowl editor, open **File → Build Settings** (or the equivalent Build Window panel). Here you:
+In the Prowl editor, open the **Build Window** panel. Here you:
 
 1. Add the scenes you want included in the build (at least one is required).
 2. Choose the target **Platform** (Windows, Linux, macOS) and **Architecture** (x64, Arm64, …).
@@ -32,11 +32,12 @@ In the Prowl editor, open **File → Build Settings** (or the equivalent Build W
     active.GenerateGameProject();
     active.CompileGameAssembly(new DotnetCompileOptions
     {
-        isRelease = configuration == Configuration.Release,
+        isRelease      = configuration == Configuration.Release,
         isSelfContained = false,
-        platform = platform,
-        architecture = architecture,
-        outputPath = project,
+        platform       = platform,
+        architecture   = architecture,
+        outputPath     = project,
+        tempPath       = tmpProject,
     });
     ```
   </Step>
@@ -48,11 +49,11 @@ In the Prowl editor, open **File → Build Settings** (or the equivalent Build W
     // Key options used when compiling the player
     CSProjectOptions options = new()
     {
-        OutputName            = "DesktopPlayer",
-        OutputExecutable      = true,
-        AllowUnsafeCode       = true,
+        OutputName             = "DesktopPlayer",
+        OutputExecutable       = true,
+        AllowUnsafeCode        = true,
         EnableAOTCompatibility = true,
-        PublishAOT            = BuildProjectSettings.Instance.EnableAOTCompilation,
+        PublishAOT             = BuildProjectSettings.Instance.EnableAOTCompilation,
     };
     options.AddReference(runtimeAssembly, copyLocal: true);
     options.AddReference(gameLibrary);

@@ -1,7 +1,7 @@
 ---
-title: 'GameObjects and Components in Prowl Engine'
-sidebarTitle: 'GameObjects'
-description: 'Understand Prowl's entity-component model: GameObjects are scene entities composed of MonoBehaviour components that define their behaviour.'
+title: 'GameObjects, Components, and Prefabs in Prowl Engine'
+sidebarTitle: 'GameObjects & Components'
+description: 'Understand the Prowl entity-component model: GameObjects are scene entities composed of MonoBehaviour components that define their behaviour.'
 ---
 
 Prowl's entity-component model is the backbone of everything you build. Every interactive thing in a scene — a character, a camera, a light source, a trigger volume — is a **GameObject**. On its own a GameObject is just a named container with a Transform; the actual behaviour comes from **MonoBehaviour** components you attach to it. This mirrors the workflow many Unity developers are already familiar with while sitting on a clean .NET 9 foundation.
@@ -20,10 +20,13 @@ Prowl's entity-component model is the backbone of everything you build. Every in
 
 ```csharp
 // Walk every MonoBehaviour of a given type in the active scene
-MySystem[] systems = EngineObject.FindObjectsOfType<MySystem>();
+MySystem?[] systems = EngineObject.FindObjectsOfType<MySystem>();
 
-// Lookup by runtime instance ID
+// Lookup by runtime instance ID (integer)
 EngineObject obj = EngineObject.FindObjectByID<EngineObject>(someID);
+
+// Lookup by stable Guid identifier
+GameObject go = EngineObject.FindObjectByIdentifier<GameObject>(someGuid);
 ```
 
 <Note>
@@ -137,7 +140,7 @@ go.Transform.rotation = Quaternion.identity;
 
 // Local-space read/write
 go.Transform.localPosition = new Vector3(0, 0, 5);
-go.Transform.localEulerAngles = new System.Numerics.Vector3(0, 90, 0);
+go.Transform.localEulerAngles = new Vector3(0, 90, 0);
 go.Transform.localScale = Vector3.one * 2f;
 
 // Convert between spaces
@@ -213,8 +216,8 @@ PrefabLink link = go.PrefabLink;
 // Apply prefab data + per-instance overrides
 link.Apply();
 
-// Check whether a field has been overridden locally
-bool overridden = link.HasChange(go, nameof(go.Name));
+// Check whether a specific field has been overridden locally
+bool overridden = link.HasChange(go, "Name");
 ```
 
 ### PrefabUtility

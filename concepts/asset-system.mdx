@@ -1,6 +1,6 @@
 ---
-title: 'Asset System: Import, Reference, and Load Assets'
-sidebarTitle: 'Assets'
+title: 'Asset System: Importing, Referencing, and Loading Assets'
+sidebarTitle: 'Asset System'
 description: 'Prowl uses meta files, GUID references, and a scriptable importer pipeline to track, import, and load assets like meshes, textures, audio, and scripts.'
 ---
 
@@ -153,12 +153,12 @@ finally
 ### Loading assets (editor)
 
 ```csharp
-// By file path
-Texture2D tex = AssetDatabase.LoadAsset<Texture2D>(
+// By file path (returns null if asset could not be loaded)
+Texture2D? tex = AssetDatabase.LoadAsset<Texture2D>(
     new FileInfo("Assets/Textures/hero.png"), fileID: 0);
 
 // By GUID
-Mesh mesh = AssetDatabase.LoadAsset<Mesh>(knownGuid, fileID: 0);
+Mesh? mesh = AssetDatabase.LoadAsset<Mesh>(knownGuid, fileID: 0);
 ```
 
 ### GUID ↔ path utilities
@@ -247,16 +247,19 @@ The built-in importers follow this same pattern:
 
 | Importer | Extensions |
 |---|---|
-| `TextureImporter` | `.png`, `.jpg`, `.tga`, `.dds`, `.webp`, … |
+| `TextureImporter` | `.png`, `.bmp`, `.jpg`, `.jpeg`, `.tga`, `.dds`, `.webp`, `.tif`, `.tiff`, `.gif` |
 | `AudioClipImporter` | `.wav`, `.wave`, `.ogg` |
 | `MeshImporter` | `.mesh` |
-| `ModelImporter` | `.fbx`, `.obj`, `.gltf`, `.glb`, … |
-| `FontImporter` | `.ttf`, `.otf` |
+| `ModelImporter` | `.obj`, `.blend`, `.dae`, `.fbx`, `.gltf`, `.ply`, `.pmx`, `.stl` |
+| `FontImporter` | `.ttf` |
 | `ShaderImporter` | `.shader` |
+| `ComputeShaderImporter` | `.compute` |
 | `MaterialImporter` | `.mat` |
-| `SceneImporter` | `.prowl` |
+| `SceneImporter` | `.scene` |
 | `PrefabImporter` | `.prefab` |
-| `TextAssetImporter` | `.txt`, `.json`, `.xml`, `.csv`, … |
+| `ScriptableObjectImporter` | `.scriptobj` |
+| `MonoScriptImporter` | `.cs` |
+| `TextAssetImporter` | `.txt`, `.md` |
 
 ---
 
@@ -276,7 +279,7 @@ var subRef = new AssetRef<Material>(guid, fileID: 1);
 ```
 
 <Accordion title="Asset caching details">
-  After a successful import, the serialised asset data is written to `Library/AssetDatabase/<guid>.prowl_asset`. On the next load request, `AssetDatabase` reads from this cached file rather than re-running the importer. The cache is invalidated when the source file's `LastWriteTime` changes or when the meta file's `version` is outdated.
+  After a successful import, the serialised asset data is written to `Library/AssetDatabase/<guid>.serialized`. On the next load request, `AssetDatabase` reads from this cached file rather than re-running the importer. The cache is invalidated when the source file's `LastWriteTime` changes or when the meta file's `version` is outdated.
 
   Cached objects are kept in memory in `guidToAssetData`. If the main or any sub-asset is found to be destroyed, the whole entry is evicted and reloaded from disk on the next access.
 </Accordion>

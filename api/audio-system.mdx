@@ -1,7 +1,7 @@
 ---
-title: 'AudioSystem API — Play and Manage Sounds'
-sidebarTitle: 'AudioSystem'
-description: 'Reference for Prowl's static AudioSystem class: initialize OpenAL, play audio clips, manage audio pools, and control ActiveAudio handles.'
+title: 'AudioSystem API — Play and Manage Game Audio in Prowl'
+sidebarTitle: 'Audio System'
+description: 'Reference for Prowl's AudioSystem class: initialize OpenAL, play audio clips with 3D positioning, manage audio pools, and control ActiveAudio handles.'
 ---
 
 Prowl's audio system is a thin, engine-agnostic wrapper built on top of OpenAL (via `OpenALEngine`), with an automatic fallback to a silent `NullAudioEngine` when no audio hardware is available. The static `AudioSystem` class manages three pools: an `AudioBuffer` cache keyed by `AudioClip` (so the same clip's PCM data is only uploaded to the GPU once), a source pool of reusable `ActiveAudio` objects, and an active-source list from which finished sources are automatically recycled. Sound playback returns an `ActiveAudio` handle, giving callers control over gain, pitch, position, and loop state after the sound starts. A single `AudioListener` component represents the listener in world space; its transform drives spatial audio attenuation and panning.
@@ -88,6 +88,16 @@ public static ActiveAudio PlaySound(
   `AbsoluteWorld` — position is in world space; distance attenuation and panning applied.  
   `ListenerRelative` — position is relative to the listener; use for 2D / UI sounds.
 </ParamField>
+
+#### From AudioBuffer (simple)
+
+```csharp
+public static ActiveAudio PlaySound(AudioBuffer buffer)
+```
+
+Plays a pre-fetched buffer at full volume and pitch, listener-relative, with a max distance of 32 units.
+
+<ParamField path="buffer" type="AudioBuffer">Pre-fetched audio buffer (from `GetAudioBuffer`).</ParamField>
 
 #### From AudioBuffer (full control)
 

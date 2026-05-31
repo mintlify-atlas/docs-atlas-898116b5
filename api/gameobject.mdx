@@ -25,7 +25,7 @@ public GameObject(AssetRef<Prefab> prefab)
   </Tab>
   <Tab title="From Prefab">
     ```csharp
-    // In play mode: deep-copies the prefab data
+    // In play mode: deep-copies the prefab data into this object
     // In editor mode: links via PrefabLink and applies it
     var go = new GameObject(myPrefabRef);
     ```
@@ -168,7 +168,7 @@ public GameObject(AssetRef<Prefab> prefab)
 
 ### SetParent
 
-Re-parents this `GameObject` under `NewParent`. Optionally preserves the object's world-space position and rotation.
+Re-parents this `GameObject` under `NewParent`. Optionally preserves the object's world-space position and rotation. If the new parent belongs to a different scene, the object is moved to that scene automatically.
 
 ```csharp
 public bool SetParent(GameObject NewParent, bool worldPositionStays = true)
@@ -187,19 +187,29 @@ public bool SetParent(GameObject NewParent, bool worldPositionStays = true)
 </ResponseField>
 
 ```csharp
-child.SetParent(parentGO);                   // preserve world position
+child.SetParent(parentGO);                            // preserve world position
 child.SetParent(parentGO, worldPositionStays: false); // keep local values
-child.SetParent(null);                       // detach to scene root
+child.SetParent(null);                                // detach to scene root
 ```
 
 ---
 
 ### IsChildOf
 
-Returns `true` if this object is anywhere in the descendant hierarchy of `parent`.
+Returns `true` if this object is anywhere in the descendant hierarchy of `parent`. Returns `false` if this object is the same as `parent`.
 
 ```csharp
 public bool IsChildOf(GameObject parent)
+```
+
+---
+
+### IsParentOf
+
+Returns `true` if this object is a direct parent (or grandparent, etc.) of `go`. Searches the entire subtree recursively.
+
+```csharp
+public bool IsParentOf(GameObject go)
 ```
 
 ---
@@ -225,9 +235,29 @@ public void GetChildrenDeep(List<GameObject> resultList)
 
 ---
 
+### GetChildAtIndexPath
+
+Traverses the child hierarchy by following a sequence of child indices and returns the resulting object. Returns `null` if any index is out of range.
+
+```csharp
+public GameObject GetChildAtIndexPath(IEnumerable<int> indexPath)
+```
+
+---
+
+### GetIndexPathOfChild
+
+Determines the sequence of child indices that leads from this object down to the specified child (or grandchild, etc.).
+
+```csharp
+public List<int> GetIndexPathOfChild(GameObject child)
+```
+
+---
+
 ### GetSiblingIndex / SetSiblingIndex
 
-Gets or sets the zero-based index of this object within its parent's `children` list.
+Gets or sets the zero-based index of this object within its parent's `children` list. `GetSiblingIndex` returns `null` when the object has no parent.
 
 ```csharp
 public int? GetSiblingIndex()
@@ -238,7 +268,7 @@ public void SetSiblingIndex(int index)
 
 ### FindChildByIdentifier
 
-Searches this object and optionally all descendants for a child with a matching `Guid` identifier.
+Searches this object and optionally all descendants for a child with a matching `Guid` identifier. Returns `this` if this object's own identifier matches.
 
 ```csharp
 public GameObject FindChildByIdentifier(Guid identifier, bool deep = true)
@@ -433,10 +463,20 @@ foreach (var r in root.GetComponentsInChildren<MeshRenderer>())
 
 ### GetComponentByIdentifier
 
-Finds a component by its persistent `Guid` identifier rather than type.
+Finds a component on this object by its persistent `Guid` identifier rather than type.
 
 ```csharp
 public MonoBehaviour? GetComponentByIdentifier(Guid identifier)
+```
+
+---
+
+### GetComponentInChildrenByIdentifier
+
+Finds a component by persistent `Guid` identifier, searching this object (optionally) and all its children.
+
+```csharp
+public MonoBehaviour GetComponentInChildrenByIdentifier(Guid identifier, bool includeSelf = true)
 ```
 
 ---
@@ -498,7 +538,7 @@ if (other.CompareTag("Enemy"))
 
 ### Instantiate (GameObject overloads)
 
-Deep-clones an existing `GameObject` and adds it to the active scene.
+Deep-clones an existing `GameObject`. The no-parent overload explicitly adds the clone to the active scene. The parent and position/rotation overloads call `SetParent` to place the clone in the hierarchy (which routes it to the correct scene through the parent), but do not call `SceneManager.Scene.Add` directly.
 
 ```csharp
 public static GameObject Instantiate(GameObject original)
@@ -520,14 +560,14 @@ public static GameObject Instantiate(GameObject original, Vector3 position, Quat
 </ParamField>
 
 <ResponseField name="returns" type="GameObject">
-  The cloned `GameObject` already added to the active scene.
+  The cloned `GameObject`.
 </ResponseField>
 
 ---
 
 ### Instantiate (Prefab overloads)
 
-Instantiates from an `AssetRef<Prefab>`. Returns `null` if the reference is unavailable.
+Instantiates from an `AssetRef<Prefab>`. Returns `null` if the reference is unavailable. The no-parent and with-parent overloads add the clone to the active scene explicitly; the position/rotation overload uses `SetParent` to place the clone.
 
 ```csharp
 public static GameObject Instantiate(AssetRef<Prefab> original)

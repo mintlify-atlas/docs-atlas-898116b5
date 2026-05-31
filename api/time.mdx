@@ -1,7 +1,7 @@
 ---
-title: 'Time API — Frame Timing and Timestep Control'
+title: 'Time API — Frame Timing and Timestep Control in Prowl'
 sidebarTitle: 'Time'
-description: 'Reference for Prowl's static Time class: all timing properties including deltaTime, fixedDeltaTime, timeScale, frameCount, and smoothDeltaTime.'
+description: 'Reference for Prowl's Time class: deltaTime, fixedDeltaTime, timeScale, frameCount, smoothDeltaTime, unscaled time, and the multi-context TimeData stack.'
 ---
 
 Prowl's `Time` class provides every timing value a game or engine subsystem could need. It is a thin static façade over a stack of `TimeData` objects — `Time.TimeStack` — allowing different engine contexts (e.g., editor playmode vs. a paused-game sub-simulation) to maintain their own independent clocks by pushing and popping `TimeData` instances. In normal gameplay only one `TimeData` lives on the stack: the main game clock, which is updated once per frame by the engine loop. All properties delegate directly to `Time.CurrentTime`, the topmost entry on the stack.

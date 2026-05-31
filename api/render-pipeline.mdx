@@ -1,7 +1,7 @@
 ---
-title: 'RenderPipeline API — Custom Rendering in Prowl'
-sidebarTitle: 'RenderPipeline'
-description: 'Reference for Prowl's RenderPipeline abstract class and DefaultRenderPipeline: implement custom rendering passes, manage renderables, and hook into camera draw.'
+title: 'RenderPipeline API — Custom Rendering Passes in Prowl'
+sidebarTitle: 'Render Pipeline'
+description: 'Reference for Prowl's RenderPipeline and DefaultRenderPipeline: implement custom rendering passes, manage renderables, and hook into the camera draw call.'
 ---
 
 Prowl's rendering architecture is built around the `RenderPipeline` abstract class. Every frame, the engine collects all renderable objects and lights into static lists, then delegates the actual GPU work to whichever `RenderPipeline` subclass is active. The pipeline decides how to sort, batch, cull, and shade those objects, making it straightforward to swap between forward rendering, deferred rendering, or a fully custom effect without touching game code. The built-in `DefaultRenderPipeline` provides PBR forward rendering, shadow maps, a procedural sky, an infinite editor grid, and post-processing effects out of the box.

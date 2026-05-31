@@ -74,6 +74,16 @@ description: 'Reference for Prowl's EngineObject base class: identity (InstanceI
 
 ## Lifecycle Methods
 
+### CreatedInstance (virtual)
+
+Called automatically at the end of the `EngineObject` base constructor, before `Name` is applied. Override in subclasses to perform initialization that must happen at the moment of allocation.
+
+```csharp
+public virtual void CreatedInstance() { }
+```
+
+---
+
 ### DestroyLater
 
 Marks the object as destroyed and pushes it onto the deferred destruction stack. The object is **not** disposed immediately; disposal happens the next time `EngineObject.HandleDestroyed()` is called (typically at the end of the frame by the scene manager).
@@ -332,7 +342,7 @@ public static bool operator !=(EngineObject left, EngineObject right)
 The extension method `Null()` provides a concise null-or-destroyed check:
 
 ```csharp
-// Extension on EngineObject
+// Extension on EngineObject (defined in EngineObjectExtensions)
 public static bool Null(this EngineObject obj) => obj == null || obj.IsDestroyed;
 ```
 

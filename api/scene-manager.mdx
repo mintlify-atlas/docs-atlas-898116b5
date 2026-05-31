@@ -85,7 +85,7 @@ if (sceneRef.IsAvailable)
 
 ### InstantiateNewScene
 
-Clears the current scene and populates it with a default setup: a directional light and a main camera pre-configured with `MotionBlurEffect`, `KawaseBloomEffect`, and `ToneMapperEffect`. Useful for the editor's "New Scene" command or test harnesses.
+Clears the current scene and populates it with a default setup: a directional light and a main camera pre-configured with `MotionBlurEffect`, `KawaseBloomEffect`, and `ToneMapperEffect`. Fires `[OnSceneLoad]` callbacks after setup. Useful for the editor's "New Scene" command or test harnesses.
 
 ```csharp
 public static void InstantiateNewScene()
@@ -104,7 +104,7 @@ The store/restore pair lets the editor snapshot the scene before entering play m
 
 ### StoreScene
 
-Serializes the current scene into an internal `EchoObject` snapshot and records its `AssetID`. Asserts that no scene is already stored.
+Serializes the current scene into an internal `EchoObject` snapshot and records its `AssetID`. Asserts (via `Debug.If`) that no scene is already stored.
 
 ```csharp
 public static void StoreScene()
@@ -112,7 +112,7 @@ public static void StoreScene()
 
 ### RestoreScene
 
-Deserializes the stored snapshot back into a live `Scene`, replaces `Current`, resolves prefab links, and fires `OnLevelWasLoaded`. Asserts that a snapshot exists.
+Deserializes the stored snapshot back into a live `Scene`, replaces `Current`, resolves prefab links, and fires `[OnSceneLoad]` attribute callbacks. Asserts that a snapshot exists. Note that `OnLevelWasLoaded` is **not** called on `MonoBehaviour` components during restore — it is only called by `LoadScene`.
 
 ```csharp
 public static void RestoreScene()
@@ -142,7 +142,7 @@ SceneManager.ClearStoredScene();
 
 ### Clear
 
-Tears down the active scene: fires `[OnSceneUnload]` attribute callbacks, destroys all `GameObject`s, processes the engine's destroy queue via `EngineObject.HandleDestroyed()`, resets the main camera reference, and replaces `Current` with a fresh empty `Scene`.
+Tears down the active scene: fires `[OnSceneUnload]` attribute callbacks, destroys the current `Scene` immediately (which in turn destroys all `GameObject`s and components), processes the engine's destroy queue via `EngineObject.HandleDestroyed()`, resets the main camera reference, and replaces `Current` with a fresh empty `Scene`.
 
 ```csharp
 [OnAssemblyUnload]
@@ -159,7 +159,7 @@ public static void Clear()
 
 ### Update
 
-Drives one simulation tick. Called each frame by the host's update delegate (typically `Application.Update`).
+Drives one simulation tick. Called each frame by the host's update delegate (typically wired to `Application.Update`).
 
 ```csharp
 public static void Update()
@@ -167,7 +167,7 @@ public static void Update()
 
 Internally this method:
 1. Snapshots the list of active `GameObject`s.
-2. Calls `PreUpdate` on each, which triggers deferred `Awake` and `Start` calls.
+2. Calls `PreUpdate` on each, which triggers deferred `Awake` and `Start` calls on components.
 3. Steps the physics world (only when `Application.IsPlaying`).
 4. Runs `UpdateCoroutines` and `Update` on every enabled `MonoBehaviour`.
 5. Runs `LateUpdate` on every enabled `MonoBehaviour`.
@@ -256,7 +256,7 @@ SceneManager.ForeachComponent(
 
 ### Has
 
-Checks whether a specific `GameObject` instance currently exists anywhere in the active scene (recursive search by `InstanceID`).
+Checks whether a specific `GameObject` instance currently exists anywhere in the active scene (recursive search by `InstanceID` across `Scene.AllObjects`).
 
 ```csharp
 public static bool Has(GameObject original)
@@ -285,7 +285,7 @@ Prowl provides two method-level attributes that let any static method in your co
 
 | Attribute | Fires when |
 |-----------|-----------|
-| `[OnSceneLoad]` (via `OnSceneLoadAttribute.Invoke()`) | After a new scene is fully loaded and prefabs are resolved. |
+| `[OnSceneLoad]` (via `OnSceneLoadAttribute.Invoke()`) | After a new scene is fully loaded and prefabs are resolved (called by `LoadScene` and `InstantiateNewScene`). |
 | `[OnSceneUnload]` (via `OnSceneUnloadAttribute.Invoke()`) | Before the current scene is destroyed during `Clear()`. |
 
 These hooks are discovered automatically by the assembly manager; no manual registration is required.

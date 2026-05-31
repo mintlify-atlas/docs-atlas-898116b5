@@ -92,7 +92,7 @@ public class SpringArm : MonoBehaviour
 
 ### frameCount
 
-`Time.frameCount` is a monotonically increasing counter incremented once per rendered frame. Use it to spread heavy work across frames with a modulo check.
+`Time.frameCount` is a monotonically increasing counter (type `long`) incremented once per rendered frame. Use it to spread heavy work across frames with a modulo check.
 
 ```csharp
 public class LodUpdater : MonoBehaviour
@@ -108,7 +108,7 @@ public class LodUpdater : MonoBehaviour
 
 ## Time Scale
 
-`Time.timeScale` is a multiplier applied to `deltaTime` and `time`. The default is `1.0`. Setting it to `0` effectively pauses all scaled time; setting it to `0.25` creates quarter-speed slow motion.
+`Time.timeScale` is a multiplier applied to `deltaTime` and `time`. The default is `1.0`. Setting it to `0` effectively pauses all scaled time; setting it to `0.25` creates quarter-speed slow motion. A float convenience alias, `Time.timeScaleF`, is also available when a `float` is required.
 
 ```csharp
 public class BulletTimeEffect : MonoBehaviour
@@ -171,7 +171,11 @@ public class GamePauser : MonoBehaviour
 
 ## Smooth Delta Time
 
-`Time.smoothDeltaTime` is an exponentially weighted moving average of the raw frame delta, smoothed using `timeSmoothFactor` (default `0.25`). It dampens sudden spikes caused by garbage collection or asset loading, making it useful for values that should feel silky even under jitter.
+`Time.smoothDeltaTime` is derived from an exponentially weighted moving average of the raw unscaled frame delta (`smoothUnscaledDeltaTime`), multiplied by the current raw frame time. It dampens sudden spikes caused by garbage collection or asset loading, making it useful for display values that should feel stable even under jitter.
+
+`Time.smoothUnscaledDeltaTime` provides the underlying EMA of the raw frame duration, unaffected by `timeScale`, and is useful for smoothed unscaled timing (e.g. real-time analytics).
+
+Both values are tunable via `Time.timeSmoothFactor` (default `0.25`).
 
 ```csharp
 public class FrameRateDisplay : MonoBehaviour
@@ -231,13 +235,13 @@ Time.TimeStack.Pop();
     `1.0 / PhysicsSettings.TargetFrameRate`. The timestep used in `FixedUpdate()`.
   </Card>
   <Card title="Time.frameCount" icon="list-ol">
-    Frames rendered since launch. Use for frame-staggered work.
+    Frames rendered since launch (`long`). Use for frame-staggered work.
   </Card>
-  <Card title="Time.timeScale" icon="gauge-high">
-    Global time multiplier. `0` = paused, `0.5` = half speed, `1` = normal.
+  <Card title="Time.timeScale / timeScaleF" icon="gauge-high">
+    Global time multiplier (`double` / `float`). `0` = paused, `0.5` = half speed, `1` = normal.
   </Card>
-  <Card title="Time.smoothDeltaTime" icon="wave-sine">
-    Exponentially smoothed frame delta. Use for smooth display values and spring dampers.
+  <Card title="Time.smoothDeltaTime / smoothUnscaledDeltaTime" icon="wave-sine">
+    Smoothed frame deltas derived from an EMA of the raw frame duration. Use for stable display values and spring dampers.
   </Card>
 </CardGroup>
 

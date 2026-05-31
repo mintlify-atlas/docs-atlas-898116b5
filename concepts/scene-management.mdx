@@ -1,6 +1,6 @@
 ---
-title: 'Scene Management and Lifecycle in Prowl'
-sidebarTitle: 'Scenes'
+title: 'Scene Management and Lifecycle in the Prowl Engine'
+sidebarTitle: 'Scene Management'
 description: 'Learn how Prowl manages scenes: loading, unloading, instantiating new scenes, and the scene update/render loop driven by SceneManager.'
 ---
 
@@ -15,7 +15,7 @@ Prowl organises all live `GameObject`s into a single active **Scene**. The stati
 | `AllObjects` | All non-destroyed `GameObject`s registered in the scene |
 | `ActiveObjects` | Objects that are non-destroyed **and** `enabledInHierarchy` |
 | `RootObjects` | Top-level objects with no parent |
-| `SaveableObjects` | Objects not marked with `HideFlags.DontSave` |
+| `SaveableObjects` | Objects not marked with `HideFlags.DontSave` or `HideFlags.HideAndDontSave` |
 | `Count` | Total number of registered objects |
 | `Fog` | `FogParams` struct (mode, colour, density) |
 | `Ambient` | `AmbientLightParams` struct (uniform or hemisphere lighting) |
@@ -113,16 +113,18 @@ Each frame the engine calls three methods on `SceneManager`:
 
 ### ForeachComponent utility
 
-`SceneManager.ForeachComponent` is a convenience helper used internally — and usable from your own systems — to iterate all enabled components in a set of objects:
+`SceneManager.ForeachComponent` is a public helper used internally by the engine — and usable from your own systems — to iterate all `enabledInHierarchy` components across a set of `GameObject`s:
 
 ```csharp
-var activeGOs = SceneManager.Scene.ActiveObjects.ToList();
-
-SceneManager.ForeachComponent(activeGOs, component =>
-{
-    // runs only if component.EnabledInHierarchy
-    component.Do(component.Update);
-});
+// Invoke a callback on every enabled MonoBehaviour in the active scene
+SceneManager.ForeachComponent(
+    SceneManager.Scene.ActiveObjects,
+    component =>
+    {
+        // Only called when component.EnabledInHierarchy is true
+        if (component is MySystem sys)
+            sys.Tick();
+    });
 ```
 
 ---

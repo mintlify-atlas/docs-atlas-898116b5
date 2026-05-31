@@ -18,6 +18,7 @@ The table below maps each callback to the moment it fires and what you should us
 | `FixedUpdate()` | Every physics timestep (`Time.fixedDeltaTime`) | Physics forces, deterministic simulation |
 | `Update()` | Every rendered frame | Input reading, game logic, AI |
 | `LateUpdate()` | Every frame, after all `Update()` calls finish | Camera follow, IK, depend-on-update logic |
+| `OnLevelWasLoaded()` | When a new scene finishes loading | Reinitialize scene-dependent state |
 | `OnDisable()` | Each time the component or its GameObject becomes inactive | Unsubscribe from events, pause state |
 | `OnDestroy()` | When the component is permanently removed | Final cleanup, releasing unmanaged resources |
 
@@ -34,13 +35,10 @@ The table below maps each callback to the moment it fires and what you should us
 ```csharp
 public class PlayerStats : MonoBehaviour
 {
-    private Rigidbody _rb;
     private int _health;
 
     public override void Awake()
     {
-        // Safe: caches a sibling component before any Start() runs
-        _rb = GetComponent<Rigidbody>();
         _health = 100;
     }
 }
@@ -139,15 +137,12 @@ public class SmoothCamera : MonoBehaviour
 ```csharp
 public class CarController : MonoBehaviour
 {
-    private Rigidbody _rb;
     public float acceleration = 15f;
-
-    public override void Awake() => _rb = GetComponent<Rigidbody>();
 
     public override void FixedUpdate()
     {
         float input = Input.GetKey(Key.W) ? 1f : 0f;
-        _rb.AddForce(Transform.Forward * acceleration * input, ForceMode.Acceleration);
+        Transform.position += Transform.Forward * acceleration * input * (float)Time.fixedDeltaTime;
     }
 }
 ```
@@ -179,6 +174,8 @@ public class NetworkSession : MonoBehaviour
 
 ## Scene Loading
 
+`OnLevelWasLoaded()` is called on every active MonoBehaviour whenever a new scene finishes loading. Use it to reinitialize any state that depends on scene contents.
+
 ```csharp
 public class MusicManager : MonoBehaviour
 {
@@ -204,7 +201,7 @@ These methods are called on components attached to the **same** GameObject as a 
   <Card title="OnPostRender(Camera)" icon="image">
     Called after all scene geometry has been drawn to the camera's target. Use it to draw overlays.
   </Card>
-  <Card title="OnRenderImage(src, dest)" icon="wand-magic-sparkles">
+  <Card title="OnRenderImage(RenderTexture, RenderTexture)" icon="wand-magic-sparkles">
     Full-screen image-effect callback. Blit `src` to `dest` with a material to apply post-processing.
   </Card>
 </CardGroup>
@@ -334,6 +331,9 @@ public class GridRenderer : MonoBehaviour
   </Step>
   <Step title="OnGUI()">
     Immediate-mode UI for cameras with GUILayer.
+  </Step>
+  <Step title="OnLevelWasLoaded()">
+    Called on all active MonoBehaviours when a new scene finishes loading.
   </Step>
   <Step title="OnDisable()">
     When the component or its GameObject is deactivated. Unsubscribe events here.

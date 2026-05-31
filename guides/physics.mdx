@@ -1,5 +1,5 @@
 ---
-title: 'Physics Simulation with Jitter2 in Prowl'
+title: 'Rigid Body Physics with the Jitter2 Engine in Prowl'
 sidebarTitle: 'Physics'
 description: 'Set up physics simulation in Prowl using Jitter2: configure Rigidbody3D, perform raycasts, set layer collision rules, and tune physics settings.'
 ---
@@ -91,8 +91,8 @@ rb.AddForce(new Vector3(0, 500, 0));
 // Apply force at a specific world-space point (creates torque)
 rb.AddForceAtPosition(new Vector3(100, 0, 0), worldHitPoint);
 
-// Apply a torque impulse
-rb.AddTorque(new Vector3(0, 10, 0));
+// Add torque directly
+rb.Torque += new Vector3(0, 10, 0);
 
 // Direct velocity manipulation
 rb.Velocity = new Vector3(0, 10, 0); // launch upward
@@ -131,7 +131,7 @@ rb.Velocity = new Vector3(0, 10, 0); // launch upward
     Ignores hits beyond `maxDistance` units.
 
     ```csharp
-    float range = 10.0f;
+    double range = 10.0;
     if (Physics.Raycast(muzzle.position, muzzle.forward, range, out RaycastHit hit))
     {
         ApplyDamage(hit.rigidbody, 25);
@@ -142,9 +142,12 @@ rb.Velocity = new Vector3(0, 10, 0); // launch upward
     Only tests against bodies on the specified `LayerMask`.
 
     ```csharp
-    LayerMask groundMask = LayerMask.FromLayer(0); // layer 0
+    // Build a mask that includes only layer 0
+    LayerMask groundMask = new LayerMask();
+    groundMask.SetLayer(0);
+
     if (Physics.Raycast(transform.position, Vector3.down,
-                        out RaycastHit hit, 1.1f, groundMask))
+                        out RaycastHit hit, 1.1, groundMask))
     {
         isGrounded = true;
     }
@@ -157,12 +160,13 @@ rb.Velocity = new Vector3(0, 10, 0); // launch upward
 ```csharp
 public struct RaycastHit
 {
-    public bool         hit;       // Did the ray hit anything?
-    public double       distance;  // Lambda — distance from origin to impact
-    public Vector3      normal;    // Surface normal at the hit point
-    public Vector3      point;     // World-space impact position
-    public Rigidbody3D  rigidbody; // The Rigidbody3D that was struck
-    public Transform    transform; // Transform of the struck GameObject
+    public bool            hit;       // Did the ray hit anything?
+    public double          distance;  // Lambda — distance from origin to impact
+    public Vector3         normal;    // Surface normal at the hit point
+    public Vector3         point;     // World-space impact position
+    public Rigidbody3D     rigidbody; // The Rigidbody3D that was struck
+    public RigidBodyShape  shape;     // The Jitter2 shape that was struck
+    public Transform       transform; // Transform of the struck GameObject
 }
 ```
 
@@ -206,8 +210,10 @@ public class GroundChecker : MonoBehaviour
 
     public override void Update()
     {
-        // Cast slightly longer than half the character height
-        LayerMask groundOnly = LayerMask.FromLayer(0);
+        // Build a mask for layer 0 (ground)
+        LayerMask groundOnly = new LayerMask();
+        groundOnly.SetLayer(0);
+
         IsGrounded = Physics.Raycast(
             Transform.position,
             Vector3.down,

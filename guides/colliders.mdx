@@ -1,5 +1,5 @@
 ---
-title: 'Colliders: Shapes and Triggers in Prowl'
+title: 'Physics Colliders: Shapes, Compound Bodies, and Wheels'
 sidebarTitle: 'Colliders'
 description: 'Add physics colliders to GameObjects in Prowl: box, sphere, capsule, cylinder, cone, convex hull, mesh, and wheel collider components.'
 ---
@@ -14,9 +14,9 @@ A `Collider` on its own has no effect. It must live on the same `GameObject` as 
 Multiple colliders on a single `Rigidbody3D` are composed into a **compound body**. Each collider's `center` and `rotation` offsets are applied in the rigid body's local space, making compound shapes easy to build without additional code.
 </Note>
 
-The base `Collider` class exposes two shared offset properties:
+The base `Collider` class exposes two shared offset fields:
 
-| Property | Type | Description |
+| Field | Type | Description |
 |---|---|---|
 | `center` | `Vector3` | Local-space positional offset of the shape relative to the parent rigid body. |
 | `rotation` | `Vector3` | Euler-angle rotation offset applied to the shape in local space. |
@@ -125,7 +125,7 @@ Do not use `MeshCollider` on dynamic rigid bodies. The triangle-mesh shape does 
 `WheelCollider` is a specialised component that simulates a raycast-based vehicle wheel with suspension, side-slip friction, and drive torque. It does not extend `Collider` — it is a standalone `MonoBehaviour` that must be placed on a child `GameObject` of the vehicle's `Rigidbody3D`.
 
 <Note>
-`WheelCollider` is marked experimental. The forward-friction and torque feedback code paths are partially commented out in the source while the model is being refined.
+`WheelCollider` is marked experimental. The forward-friction code path is partially commented out in the source while the model is being refined.
 </Note>
 
 ```csharp
@@ -161,6 +161,7 @@ Key `WheelCollider` properties:
 | `SteerAngle` | `0` | Yaw offset applied when casting contact rays (degrees). |
 | `IsLocked` | `false` | When `true`, the wheel is braked — angular velocity is zeroed. |
 | `IsGrounded` | _(read-only)_ | `true` when at least one ray hit the ground last step. |
+| `WheelRotation` | _(read-only)_ | Accumulated wheel rotation angle (radians). |
 
 ## Compound Colliders
 
@@ -226,7 +227,7 @@ You can enable and disable individual `Collider` components at runtime. Each tog
                 Transform.position,
                 Vector3.down,
                 out _,
-                0.95f);
+                0.95);
 
             // Horizontal movement
             double h = Input.GetAxis("Horizontal");

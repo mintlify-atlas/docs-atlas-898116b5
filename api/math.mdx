@@ -1,7 +1,7 @@
 ---
-title: 'Math Library Reference — Vectors, Quaternions, and Utilities'
+title: 'Math API — Vectors, Quaternions, and Math Utilities'
 sidebarTitle: 'Math'
-description: 'Reference for Prowl's math library: double/float Vector types, Quaternion, Matrix4x4, Ray, Bounds, Rect, Transform, and Mathf/MathD utilities.'
+description: 'Reference for Prowl's math library: double-precision Vector2/3/4, Quaternion, Matrix4x4, Bounds, Ray, Transform, and the MathD/Mathf utility classes.'
 ---
 
 Prowl's math library provides double-precision vector and matrix types that mirror the Unity-style API while giving full 64-bit accuracy — critical for large open worlds and high-precision simulations. The core types (`Vector2`, `Vector3`, `Vector4`, `Quaternion`, `Matrix4x4`) are value types (`struct`) with aggressive-inlining annotations. Convenience `.ToFloat()` methods bridge to `System.Numerics` types required by Veldrid and other float-based libraries. The `MathD` and `Mathf` static utility classes wrap `System.Math` with concise names and add higher-level operations like `Lerp`, `PingPong`, `Smooth01`, and `ClampMagnitude`.
@@ -131,7 +131,6 @@ public struct Quaternion : IEquatable<Quaternion>
 | `AngleAxis(angle, axis)` | static | From axis (normalised) and angle in **radians** |
 | `Slerp(a, b, t)` | static | Spherical interpolation |
 | `Lerp(a, b, t)` | static | Linear interpolation (not normalised) |
-| `LookRotation(fwd, up)` | static | Rotation looking along `fwd` |
 | `RotateTowards(from, to, step)` | static | Clamp-stepped rotation |
 | `Dot(a, b)` | static | Quaternion dot product |
 | `operator *` | — | Quaternion × Quaternion (compose) or Quaternion × Vector3 (rotate) |
@@ -182,9 +181,10 @@ public struct Matrix4x4 : IEquatable<Matrix4x4>
 | `CreatePerspectiveFieldOfViewRightHanded(fov, aspect, near, far)` | Right-handed perspective |
 | `CreateOrthographic(w, h, near, far)` | Left-handed orthographic |
 | `CreateOrthographicOffCenter(…)` | Off-centre orthographic |
-| `CreateLookAt(pos, target, up)` | Left-handed look-at view matrix |
-| `CreateLookAtRightHanded(pos, target, up)` | Right-handed look-at |
-| `CreateLookTo(pos, dir, up)` | Look-towards view matrix |
+| `CreateLookAt(pos, target, up)` | Left-handed look-at (target point) view matrix |
+| `CreateLookAtRightHanded(pos, target, up)` | Right-handed look-at (target point) view matrix |
+| `CreateLookTo(pos, dir, up)` | Left-handed look-towards (direction) view matrix |
+| `CreateLookToRightHanded(pos, dir, up)` | Right-handed look-towards (direction) view matrix |
 | `CreateBillboard(…)` | Billboard matrix facing camera |
 | `FromFloat(System.Numerics.Matrix4x4)` | Converts from float matrix |
 
@@ -194,9 +194,15 @@ public struct Matrix4x4 : IEquatable<Matrix4x4>
 |---|---|
 | `MultiplyPoint(Vector3)` | Transforms a point (applies translation) |
 | `Invert()` | Returns the inverse, or identity if not invertible |
-| `Decompose(out scale, out rot, out trans)` | Decomposes into TRS components |
-| `Transpose()` | Returns the transposed matrix |
 | `ToFloat()` | Converts to `System.Numerics.Matrix4x4` |
+
+### Static Utility Methods
+
+| Method | Description |
+|---|---|
+| `static bool Decompose(matrix, out scale, out rot, out trans)` | Decomposes a matrix into TRS components |
+| `static Matrix4x4 Transpose(matrix)` | Returns the transposed matrix |
+| `static bool Invert(matrix, out result)` | Tries to invert; returns `false` if singular |
 
 ```csharp
 // Build a world matrix
@@ -406,7 +412,10 @@ Vector3[]       corners = frustum.GetCorners(); // 8 frustum corner points
 | `Frac(x)` | Fractional part: `x - Floor(x)` |
 | `Repeat(v, length)` | Modulo looping in `[0, length]` |
 | `PingPong(t, length)` | Ping-pong oscillation |
-| `Lerp(a, b, t)` | Linear interpolation (scalar, Vector2, Vector3, Vector4 overloads) |
+| `Lerp(double a, double b, double t)` | Scalar linear interpolation |
+| `Lerp(Vector2 a, Vector2 b, Vector2 t)` | Component-wise Vector2 lerp |
+| `Lerp(Vector3 a, Vector3 b, Vector3 t)` | Component-wise Vector3 lerp |
+| `Lerp(Vector4 a, Vector4 b, Vector4 t)` | Component-wise Vector4 lerp |
 | `LerpClamped(a, b, t)` | Lerp with `t` clamped to `[0,1]` |
 | `LerpSmooth(a, b, t)` | Smoothstep lerp |
 | `InverseLerp(a, b, t)` | Inverse linear interpolation |
